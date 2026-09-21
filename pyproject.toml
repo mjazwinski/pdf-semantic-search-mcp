@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdf-semantic-search-mcp"
+version = "0.1.0"
+description = "PDF semantic search via local embeddings, Qdrant, and an MCP server"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # PDF parsing
+    "pymupdf>=1.24.0",
+    # Embeddings
+    "sentence-transformers>=3.0.0",
+    # Vector store
+    "qdrant-client>=1.9.0",
+    # MCP server (stdio)
+    "mcp>=1.0.0",
+    # Config / env
+    "pydantic-settings>=2.0.0",
+    # CLI
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "anyio[trio]>=4.0.0",   # async test back-end
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+# CLI entry point: `pdf-ingest path/to/file.pdf`
+pdf-ingest = "pdf_semantic_search.ingestion.cli:app"
+# MCP server entry point: `pdf-mcp-server`
+pdf-mcp-server = "pdf_semantic_search.mcp_server.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pdf_semantic_search"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = [
+    "-ra",                  # show short summary for all non-passing tests
+    "--tb=short",           # compact tracebacks
+    "--strict-markers",     # fail if an unregistered marker is used
+]
+markers = [
+    "integration: tests that require live external services (Qdrant, model download). Deselect with -m 'not integration'.",
+    "slow: tests that are intentionally slow (e.g. large model inference).",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::DeprecationWarning:torch.*",
+    "ignore::UserWarning:sentence_transformers.*",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
