@@ -22,6 +22,7 @@ plus the two optional filter fields from
 """
 from __future__ import annotations
 
+import uuid
 import hashlib
 import logging
 from pathlib import Path
@@ -110,7 +111,7 @@ class IngestionService:
 
         # ── 2. Embed + upsert in batches ─────────────────────────────────────
         total = 0
-        for batch in self._batched(chunks, batch_size):
+        for batch in self._batched(chunks, batch_size): # the generartor should be build in in the parser if it makes sense at all. here the document is already in memory
             texts = [c.text for c in batch]
             vectors = self.embedder.embed(texts)
 
@@ -149,13 +150,17 @@ class IngestionService:
 
     @staticmethod
     def _deterministic_id(chunk: TextChunk) -> str:
-        """Generate a stable UUID-like string from chunk provenance.
+        """Generate a stable, Qdrant-compatible UUID from chunk provenance.
 
         Using a deterministic ID means re-ingesting the same PDF with the
         same parameters will *upsert* (overwrite) existing points rather
         than creating duplicates.
 
-        The ID is a hex digest of ``source_file:page:chunk_index``.
+        Qdrant requires IDs to be a non-negative integer or a valid UUID.
+        We take the first 16 bytes of SHA-1(``source_file:page:chunk_index``)
+        and convert them to a UUID — deterministic and collision-resistant for
+        any realistic corpus size.
         """
         key = f"{chunk.source_file}:{chunk.page}:{chunk.chunk_index}"
-        return hashlib.sha1(key.encode()).hexdigest()
+        digest_bytes = hashlib.sha1(key.encode()).digest()[:16]
+        return str(uuid.UUID(bytes=digest_bytes))

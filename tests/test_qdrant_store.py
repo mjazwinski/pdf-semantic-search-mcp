@@ -160,12 +160,19 @@ def _make_scored_point(score: float, payload: dict) -> MagicMock:
     return sp
 
 
+def _make_query_response(points: list) -> MagicMock:
+    """Shape a mock like qdrant-client ≥ 1.9 QueryResponse (has .points)."""
+    resp = MagicMock()
+    resp.points = points
+    return resp
+
+
 def test_search_returns_search_results():
     store, mock_client = _make_connected_store()
-    mock_client.search.return_value = [
+    mock_client.query_points.return_value = _make_query_response([
         _make_scored_point(0.9, {"text": "chunk1", "source_file": "a.pdf", "page": 0, "chunk_index": 0}),
         _make_scored_point(0.7, {"text": "chunk2", "source_file": "a.pdf", "page": 1, "chunk_index": 0}),
-    ]
+    ])
 
     results = store.search(_fake_vector(), top_k=2)
 
@@ -177,21 +184,21 @@ def test_search_returns_search_results():
 
 def test_search_no_filter_passes_none_to_qdrant():
     store, mock_client = _make_connected_store()
-    mock_client.search.return_value = []
+    mock_client.query_points.return_value = _make_query_response([])
 
     store.search(_fake_vector(), top_k=5, context=None, category=None)
 
-    _, kwargs = mock_client.search.call_args
+    _, kwargs = mock_client.query_points.call_args
     assert kwargs["query_filter"] is None
 
 
 def test_search_context_filter_applied():
     store, mock_client = _make_connected_store()
-    mock_client.search.return_value = []
+    mock_client.query_points.return_value = _make_query_response([])
 
     store.search(_fake_vector(), top_k=5, context="doc.pdf")
 
-    _, kwargs = mock_client.search.call_args
+    _, kwargs = mock_client.query_points.call_args
     flt = kwargs["query_filter"]
     assert flt is not None
     assert any(c.key == "context" for c in flt.must)
@@ -199,22 +206,22 @@ def test_search_context_filter_applied():
 
 def test_search_category_filter_applied():
     store, mock_client = _make_connected_store()
-    mock_client.search.return_value = []
+    mock_client.query_points.return_value = _make_query_response([])
 
     store.search(_fake_vector(), top_k=5, category="introduction")
 
-    _, kwargs = mock_client.search.call_args
+    _, kwargs = mock_client.query_points.call_args
     flt = kwargs["query_filter"]
     assert any(c.key == "category" for c in flt.must)
 
 
 def test_search_both_filters_combined():
     store, mock_client = _make_connected_store()
-    mock_client.search.return_value = []
+    mock_client.query_points.return_value = _make_query_response([])
 
     store.search(_fake_vector(), top_k=3, context="doc.pdf", category="ch1")
 
-    _, kwargs = mock_client.search.call_args
+    _, kwargs = mock_client.query_points.call_args
     flt = kwargs["query_filter"]
     keys = {c.key for c in flt.must}
     assert keys == {"context", "category"}

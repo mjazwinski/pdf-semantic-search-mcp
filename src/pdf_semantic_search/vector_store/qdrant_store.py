@@ -27,6 +27,17 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PayloadSchemaType,
+    PointStruct,
+    VectorParams,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,9 +115,6 @@ class QdrantStore:
         if self._client is not None:
             return  # already connected
 
-        from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, VectorParams
-
         logger.info("Connecting to Qdrant at %s:%d …", self.host, self.port)
         self._client = QdrantClient(host=self.host, port=self.port)
 
@@ -132,8 +140,6 @@ class QdrantStore:
         Called once after the collection is first created.  Qdrant requires
         explicit indexes for efficient payload filtering.
         """
-        from qdrant_client.models import PayloadSchemaType
-
         for field_name in ("context", "category", "source_file"):
             self._client.create_payload_index(  # type: ignore[union-attr]
                 collection_name=self.collection,
@@ -223,15 +229,16 @@ class QdrantStore:
             category,
         )
 
-        hits = self._client.search(  # type: ignore[union-attr]
+        # qdrant-client ≥ 1.9: query_points() replaces the removed search()
+        response = self._client.query_points(  # type: ignore[union-attr]
             collection_name=self.collection,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=query_filter,
             limit=top_k,
             with_payload=True,
         )
 
-        return [self._hit_to_result(h) for h in hits]
+        return [self._hit_to_result(h) for h in response.points]
 
     def list_categories(self) -> list[str]:
         """Return all distinct ``category`` values present in the collection.
@@ -281,8 +288,6 @@ class QdrantStore:
 
         Returns ``None`` if neither field is set (no filtering applied).
         """
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
-
         must: list[FieldCondition] = []
 
         if context is not None:

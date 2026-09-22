@@ -41,6 +41,11 @@ PDF Ingestion (CLI):
 # Requires Python ≥ 3.11 and uv
 uv sync
 ```
+alternatively:
+```bash
+# Requires Python ≥ 3.11 and uv
+python -m uv sync
+```
 
 ### 2. Start Qdrant
 

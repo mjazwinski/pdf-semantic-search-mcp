@@ -3,31 +3,41 @@
 These tests wire the real classes together (no stubs) but mock the three
 external I/O boundaries:
 
-    fitz.open      — so no real PDF is needed
-    SentenceTransformer.encode  — so no model download is needed
-    QdrantClient   — so no Docker container is needed
+    fitz.open                  — so no real PDF is needed
+    SentenceTransformer.encode — so no model download is needed
+    QdrantClient               — so no Docker container is needed
 
-This gives us confidence that the layers integrate correctly without the
-cost of external services.
+Async handlers are invoked via ``asyncio.run()`` so the suite requires only
+plain ``pytest`` — no async plugin needed.
 
 True integration tests (real Qdrant + real model) are at the bottom and
 require ``pytest -m integration`` to run.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from tests.conftest import make_chunks, make_mock_embedder, make_search_result
 
 
 # ---------------------------------------------------------------------------
-# Helpers — shared fake fitz document
+# Helper
+# ---------------------------------------------------------------------------
+
+
+def run(coro):
+    """Run a coroutine synchronously — no pytest-asyncio needed."""
+    return asyncio.run(coro)
+
+
+# ---------------------------------------------------------------------------
+# Fake fitz helpers
 # ---------------------------------------------------------------------------
 
 
@@ -48,8 +58,6 @@ def _fake_fitz_doc(pages: list[str]) -> MagicMock:
 
 # ---------------------------------------------------------------------------
 # Layer 1 + 2: Parser → IngestionService
-# Verifies that chunks produced by the parser are correctly turned into
-# Qdrant points with the right payload and deterministic IDs.
 # ---------------------------------------------------------------------------
 
 
@@ -64,8 +72,6 @@ class TestParserToIngestion:
         fake_doc = _fake_fitz_doc(pages)
         embedder = make_mock_embedder(dim=4)
         mock_store = MagicMock(spec=QdrantStore)
-
-        # Provide a real (temp) path so FileNotFoundError isn't raised
         pdf_path = Path("/fake/doc.pdf")
 
         with patch("fitz.open", return_value=fake_doc):
@@ -75,9 +81,7 @@ class TestParserToIngestion:
                     embedder=embedder,
                     store=mock_store,
                 )
-                total = service.ingest(
-                    pdf_path, chunk_size=chunk_size, **ingest_kwargs
-                )
+                total = service.ingest(pdf_path, chunk_size=chunk_size, **ingest_kwargs)
 
         return total, mock_store, embedder
 
@@ -85,11 +89,10 @@ class TestParserToIngestion:
         total, store, _ = self._run(["Hello, this is a short page."])
         assert total == 1
         store.upsert.assert_called_once()
-        points = store.upsert.call_args.args[0]
-        assert len(points) == 1
+        assert len(store.upsert.call_args.args[0]) == 1
 
     def test_payload_text_matches_page_content(self):
-        total, store, _ = self._run(["The transformer architecture revolutionised NLP."])
+        _, store, _ = self._run(["The transformer architecture revolutionised NLP."])
         payload = store.upsert.call_args.args[0][0]["payload"]
         assert "transformer" in payload["text"]
 
@@ -100,18 +103,12 @@ class TestParserToIngestion:
 
     def test_payload_page_index_correct(self):
         _, store, _ = self._run(["page zero", "page one"])
-        all_points = [
-            p
-            for call in store.upsert.call_args_list
-            for p in call.args[0]
-        ]
+        all_points = [p for call in store.upsert.call_args_list for p in call.args[0]]
         pages = {p["payload"]["page"] for p in all_points}
         assert pages == {0, 1}
 
     def test_context_and_category_stored_in_payload(self):
-        _, store, _ = self._run(
-            ["content"], context="annual-report", category="financials"
-        )
+        _, store, _ = self._run(["content"], context="annual-report", category="financials")
         payload = store.upsert.call_args.args[0][0]["payload"]
         assert payload["context"] == "annual-report"
         assert payload["category"] == "financials"
@@ -121,7 +118,7 @@ class TestParserToIngestion:
         embedder = make_mock_embedder(dim=4)
         mock_store = MagicMock()
 
-        def run():
+        def run_ingest():
             from pdf_semantic_search.ingestion.service import IngestionService
             from pdf_semantic_search.pdf.parser import PyMuPDFParser
             svc = IngestionService(PyMuPDFParser(), embedder, mock_store)
@@ -130,9 +127,9 @@ class TestParserToIngestion:
                     svc.ingest(Path("/fake/doc.pdf"))
             return [p["id"] for p in mock_store.upsert.call_args.args[0]]
 
-        ids_first = run()
+        ids_first = run_ingest()
         mock_store.reset_mock()
-        ids_second = run()
+        ids_second = run_ingest()
         assert ids_first == ids_second
 
     def test_empty_pdf_produces_no_upsert(self):
@@ -144,11 +141,7 @@ class TestParserToIngestion:
     def test_multi_page_embed_called_with_all_texts(self):
         pages = ["alpha beta gamma", "delta epsilon zeta"]
         _, store, embedder = self._run(pages, chunk_size=512)
-        all_texts = [
-            text
-            for call in embedder.embed.call_args_list
-            for text in call.args[0]
-        ]
+        all_texts = [text for call in embedder.embed.call_args_list for text in call.args[0]]
         assert len(all_texts) == 2
 
     def test_vector_dimension_stored_in_point(self):
@@ -159,8 +152,6 @@ class TestParserToIngestion:
 
 # ---------------------------------------------------------------------------
 # Layer 2 + 3: IngestionService → MCP search_docs
-# Verifies that a query flowing through the MCP handler produces the correct
-# JSON response, and that filter fields propagate end-to-end.
 # ---------------------------------------------------------------------------
 
 
@@ -182,15 +173,13 @@ class TestIngestionToMCPSearch:
         store.list_categories.return_value = categories or []
         return _Deps(embedder=embedder, store=store)
 
-    @pytest.mark.asyncio
-    async def test_search_result_fields_present_in_json(self):
+    def test_search_result_fields_present_in_json(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
-
         result = make_search_result(score=0.95, text="NLP chunk", page=1)
         deps = self._make_deps(results=[result])
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = await _handle_search_docs({"query": {"text": "NLP"}})
+            response = run(_handle_search_docs({"query": {"text": "NLP"}}))
 
         item = json.loads(response[0].text)[0]
         assert item["score"] == 0.95
@@ -200,65 +189,55 @@ class TestIngestionToMCPSearch:
         assert "context" in item
         assert "category" in item
 
-    @pytest.mark.asyncio
-    async def test_context_filter_propagates_to_store(self):
+    def test_context_filter_propagates_to_store(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
-
         deps = self._make_deps()
+
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            await _handle_search_docs({
+            run(_handle_search_docs({
                 "query": {"text": "test", "context": "q4-report.pdf"},
                 "max_results": 3,
-            })
+            }))
 
         kwargs = deps.store.search.call_args.kwargs
         assert kwargs["context"] == "q4-report.pdf"
         assert kwargs["top_k"] == 3
 
-    @pytest.mark.asyncio
-    async def test_category_filter_propagates_to_store(self):
+    def test_category_filter_propagates_to_store(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
-
         deps = self._make_deps()
+
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            await _handle_search_docs({
-                "query": {"text": "test", "category": "conclusions"},
-            })
+            run(_handle_search_docs({"query": {"text": "test", "category": "conclusions"}}))
 
         assert deps.store.search.call_args.kwargs["category"] == "conclusions"
 
-    @pytest.mark.asyncio
-    async def test_list_categories_returns_json_array(self):
+    def test_list_categories_returns_json_array(self):
         from pdf_semantic_search.mcp_server.server import _handle_list_categories
-
         deps = self._make_deps(categories=["conclusions", "intro", "methods"])
+
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = await _handle_list_categories()
+            response = run(_handle_list_categories())
 
-        cats = json.loads(response[0].text)
-        assert cats == ["conclusions", "intro", "methods"]
+        assert json.loads(response[0].text) == ["conclusions", "intro", "methods"]
 
-    @pytest.mark.asyncio
-    async def test_no_results_returns_empty_json_array(self):
+    def test_no_results_returns_empty_json_array(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
-
         deps = self._make_deps(results=[])
+
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = await _handle_search_docs({"query": {"text": "obscure topic"}})
+            response = run(_handle_search_docs({"query": {"text": "obscure topic"}}))
 
         assert json.loads(response[0].text) == []
 
 
 # ---------------------------------------------------------------------------
-# Full stack: Parser → Ingestion → Qdrant payload → MCP search
-# Verifies that the payload shape written during ingestion is consistent with
-# what the MCP handler reads back from search results.
+# Full stack: payload written during ingestion matches MCP search output
 # ---------------------------------------------------------------------------
 
 
 class TestFullStackPayloadConsistency:
-    """Check that the payload written by IngestionService matches what
-    the MCP handler exposes in search results — no field name mismatches."""
+    """Verifies no field-name mismatch between ingestion payload and MCP output."""
 
     @pytest.fixture(autouse=True)
     def reset_deps(self):
@@ -267,16 +246,13 @@ class TestFullStackPayloadConsistency:
         yield
         _reset_deps()
 
-    @pytest.mark.asyncio
-    async def test_ingested_payload_fields_match_search_result_fields(self):
-        """Ingest one chunk, capture the payload written, then simulate a
-        search returning that payload and verify the MCP JSON contains it."""
+    def test_ingested_payload_fields_match_search_result_fields(self):
         from pdf_semantic_search.ingestion.service import IngestionService
         from pdf_semantic_search.mcp_server.server import _Deps, _handle_search_docs
         from pdf_semantic_search.pdf.parser import PyMuPDFParser
         from pdf_semantic_search.vector_store.qdrant_store import SearchResult
 
-        # ── Ingestion side ────────────────────────────────────────────────────
+        # ── Ingest one chunk and capture its payload ──────────────────────────
         fake_doc = _fake_fitz_doc(["A test sentence for the pipeline."])
         embedder = make_mock_embedder(dim=4)
         captured_points: list[dict] = []
@@ -287,17 +263,12 @@ class TestFullStackPayloadConsistency:
         with patch("fitz.open", return_value=fake_doc):
             with patch.object(Path, "exists", return_value=True):
                 svc = IngestionService(PyMuPDFParser(), embedder, mock_store)
-                svc.ingest(
-                    Path("/fake/test.pdf"),
-                    context="test.pdf",
-                    category="testing",
-                )
+                svc.ingest(Path("/fake/test.pdf"), context="test.pdf", category="testing")
 
         assert captured_points, "No points were ingested"
         ingested_payload = captured_points[0]["payload"]
-        ingested_vector  = captured_points[0]["vector"]
 
-        # ── Search side — simulate Qdrant returning the ingested point ────────
+        # ── Simulate Qdrant returning that exact payload as a search result ───
         fake_result = SearchResult(
             score=0.99,
             text=ingested_payload["text"],
@@ -312,15 +283,13 @@ class TestFullStackPayloadConsistency:
         search_embedder = make_mock_embedder(dim=4)
         search_store = MagicMock()
         search_store.search.return_value = [fake_result]
-
         deps = _Deps(embedder=search_embedder, store=search_store)
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = await _handle_search_docs({"query": {"text": "test sentence"}})
+            response = run(_handle_search_docs({"query": {"text": "test sentence"}}))
 
         item = json.loads(response[0].text)[0]
 
-        # Verify round-trip consistency
         assert item["text"]        == ingested_payload["text"]
         assert item["source_file"] == ingested_payload["source_file"]
         assert item["page"]        == ingested_payload["page"]
@@ -352,10 +321,9 @@ class TestTrueIntegration:
 
     @pytest.fixture(autouse=True)
     def cleanup_collection(self):
-        """Drop the test collection before and after each test."""
         from qdrant_client import QdrantClient
         client = QdrantClient(host="localhost", port=6333)
-        client.recreate_collection(  # type: ignore
+        client.recreate_collection(
             collection_name=self.COLLECTION,
             vectors_config={"size": self.DIM, "distance": "Cosine"},
         )
@@ -373,7 +341,6 @@ class TestTrueIntegration:
         from pdf_semantic_search.pdf.parser import PyMuPDFParser
         from pdf_semantic_search.vector_store.qdrant_store import QdrantStore
 
-        # Create a minimal real PDF
         pdf_path = tmp_path / "integration.pdf"
         doc = fitz.open()
         page = doc.new_page()
@@ -382,10 +349,7 @@ class TestTrueIntegration:
         doc.close()
 
         embedder = SentenceTransformerEmbedder(model_name=self.MODEL)
-        store = QdrantStore(
-            host="localhost", port=6333,
-            collection=self.COLLECTION, dim=self.DIM,
-        )
+        store = QdrantStore("localhost", 6333, self.COLLECTION, self.DIM)
         store._connect()
 
         svc = IngestionService(parser=PyMuPDFParser(), embedder=embedder, store=store)
@@ -395,13 +359,11 @@ class TestTrueIntegration:
 
         query_vec = embedder.embed(["self-attention"])[0]
         results = store.search(query_vec, top_k=3, context="integration.pdf")
-
         assert len(results) > 0
         assert results[0].score > 0.5
         assert "attention" in results[0].text.lower()
 
-    @pytest.mark.asyncio
-    async def test_mcp_search_against_live_qdrant(self, tmp_path):
+    def test_mcp_search_against_live_qdrant(self, tmp_path):
         import fitz
 
         from pdf_semantic_search.embeddings.sentence_transformer import SentenceTransformerEmbedder
@@ -411,7 +373,6 @@ class TestTrueIntegration:
         from pdf_semantic_search.vector_store.qdrant_store import QdrantStore
 
         _reset_deps()
-
         pdf_path = tmp_path / "mcp_test.pdf"
         doc = fitz.open()
         page = doc.new_page()
@@ -424,19 +385,17 @@ class TestTrueIntegration:
         store._connect()
 
         svc = IngestionService(PyMuPDFParser(), embedder, store)
-        svc.ingest(pdf_path, chunk_size=200, overlap=20,
-                   context="mcp_test.pdf", category="ml")
+        svc.ingest(pdf_path, chunk_size=200, overlap=20, context="mcp_test.pdf", category="ml")
 
         deps = _Deps(embedder=embedder, store=store)
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = await _handle_search_docs({
+            response = run(_handle_search_docs({
                 "query": {"text": "deep learning representations", "category": "ml"},
                 "max_results": 3,
-            })
+            }))
 
         results = json.loads(response[0].text)
         assert len(results) > 0
         assert results[0]["score"] > 0.5
         assert results[0]["category"] == "ml"
-
         _reset_deps()

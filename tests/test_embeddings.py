@@ -121,7 +121,7 @@ def test_normalize_flag_forwarded(embedder_with_mock):
 def test_real_model_embed():
     """End-to-end: load the real model and embed two sentences."""
     embedder = SentenceTransformerEmbedder(model_name="all-MiniLM-L6-v2")
-    result = embedder.embed(["The quick brown fox", "jumped over the lazy dog"])
+    result = embedder.embed(["The quick brown fox", "The tall brown dog"])
 
     assert len(result) == 2
     assert len(result[0]) == 384

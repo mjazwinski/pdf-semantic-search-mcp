@@ -174,7 +174,12 @@ def test_parse_chunk_index_resets_per_page(tmp_pdf):
 
 
 def test_parse_passes_chunk_size_and_overlap(tmp_pdf):
-    """chunk_text must be called with the exact parameters given to parse()."""
+    """chunk_text must be called with the raw page text and the exact
+    chunk_size / overlap parameters given to parse().
+
+    Note: stripping/normalisation happens *inside* chunk_text, not before
+    the call, so the raw string (including any trailing whitespace) is passed.
+    """
     pages = ["word " * 200]
     with _patch_fitz(pages):
         with patch(
@@ -182,7 +187,7 @@ def test_parse_passes_chunk_size_and_overlap(tmp_pdf):
         ) as mock_chunk:
             PyMuPDFParser().parse(tmp_pdf, chunk_size=99, overlap=13)
 
-    mock_chunk.assert_called_once_with(pages[0].strip(), chunk_size=99, overlap=13)
+    mock_chunk.assert_called_once_with(pages[0], chunk_size=99, overlap=13)
 
 
 def test_parse_skips_truly_empty_pages(tmp_pdf):
@@ -196,13 +201,12 @@ def test_parse_skips_truly_empty_pages(tmp_pdf):
 
 def test_page_text_uses_extract_mode(tmp_pdf):
     """_page_text must forward self.extract_mode to page.get_text()."""
-    pages = ["some text"]
-    with _patch_fitz(pages) as mock_open:
-        fake_doc = mock_open.return_value.__enter__.return_value
-        fake_page = _make_fitz_page("some text")
-        fake_doc.__getitem__ = lambda self, i: fake_page
-        fake_doc.__len__ = lambda self: 1
+    fake_page = _make_fitz_page("some text")
+    fake_doc = _make_fitz_doc(["some text"])
+    # Replace the page returned by __getitem__ with our spy page
+    fake_doc.__getitem__ = lambda self, i: fake_page
 
+    with patch("fitz.open", return_value=fake_doc):
         PyMuPDFParser(extract_mode="blocks").parse(tmp_pdf, chunk_size=512, overlap=0)
 
     fake_page.get_text.assert_called_with("blocks")

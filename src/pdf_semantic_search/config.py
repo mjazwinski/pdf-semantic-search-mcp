@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     # ── Qdrant ────────────────────────────────────────────────────────────────
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
+    qdrant_grpc_port: int = 6334
     qdrant_collection: str = "pdf_chunks"
 
     # ── Embeddings ────────────────────────────────────────────────────────────

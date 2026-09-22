@@ -174,9 +174,15 @@ def test_ingest_point_ids_are_deterministic():
 
 
 def test_deterministic_id_formula():
+    """ID must be a valid UUID derived from first 16 bytes of SHA-1."""
+    import uuid
     chunk = TextChunk(text="x", source_file="a.pdf", page=2, chunk_index=5)
-    expected = hashlib.sha1(b"a.pdf:2:5").hexdigest()
-    assert IngestionService._deterministic_id(chunk) == expected
+    digest_bytes = hashlib.sha1(b"a.pdf:2:5").digest()[:16]
+    expected = str(uuid.UUID(bytes=digest_bytes))
+    result = IngestionService._deterministic_id(chunk)
+    assert result == expected
+    # Must be parseable as a UUID (Qdrant requirement)
+    uuid.UUID(result)  # raises ValueError if invalid
 
 
 def test_different_chunks_produce_different_ids():
