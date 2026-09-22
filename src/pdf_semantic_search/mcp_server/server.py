@@ -56,20 +56,6 @@ from pdf_semantic_search.vector_store.qdrant_store import QdrantStore, SearchRes
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# MCPServer application  (mcp 2.x — formerly FastMCP in mcp 1.x)
-# ---------------------------------------------------------------------------
-
-mcp = MCPServer(
-    "pdf-semantic-search",
-    instructions=(
-        "Search ingested PDF documents by natural-language query. "
-        "Use list_categories to discover filterable sections, then "
-        "search_docs with an optional category or context to narrow results."
-    ),
-)
-
-
-# ---------------------------------------------------------------------------
 # Lazy-initialised dependencies (created once, reused for server lifetime)
 # ---------------------------------------------------------------------------
 
@@ -121,7 +107,7 @@ def _reset_deps() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tool handlers  (pure business logic — testable without FastMCP)
+# Tool handlers  (pure business logic — testable without MCPServer)
 # ---------------------------------------------------------------------------
 
 
@@ -174,7 +160,7 @@ async def _handle_list_categories() -> list[TextContent]:
 
 
 # ---------------------------------------------------------------------------
-# Tool registration  (thin wrappers — schema inferred from signatures)
+# MCP tool registration  (thin wrappers — schema inferred from signatures)
 # ---------------------------------------------------------------------------
 
 

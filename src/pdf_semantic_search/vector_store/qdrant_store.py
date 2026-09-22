@@ -31,6 +31,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
     FieldCondition,
+    Condition,
     Filter,
     MatchValue,
     PayloadSchemaType,
@@ -229,16 +230,15 @@ class QdrantStore:
             category,
         )
 
-        # qdrant-client ≥ 1.9: query_points() replaces the removed search()
-        response = self._client.query_points(  # type: ignore[union-attr]
+        hits = self._client.search(  # type: ignore[union-attr]
             collection_name=self.collection,
-            query=query_vector,
+            query_vector=query_vector,
             query_filter=query_filter,
             limit=top_k,
             with_payload=True,
         )
 
-        return [self._hit_to_result(h) for h in response.points]
+        return [self._hit_to_result(h) for h in hits]
 
     def list_categories(self) -> list[str]:
         """Return all distinct ``category`` values present in the collection.
@@ -288,18 +288,18 @@ class QdrantStore:
 
         Returns ``None`` if neither field is set (no filtering applied).
         """
-        must: list[FieldCondition] = []
+        must_filters: list[Condition] = []
 
         if context is not None:
-            must.append(
+            must_filters.append(
                 FieldCondition(key="context", match=MatchValue(value=context))
             )
         if category is not None:
-            must.append(
+            must_filters.append(
                 FieldCondition(key="category", match=MatchValue(value=category))
             )
 
-        return Filter(must=must) if must else None
+        return Filter(must=must_filters) if must_filters else None
 
     @staticmethod
     def _hit_to_result(hit) -> SearchResult:
