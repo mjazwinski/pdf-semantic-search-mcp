@@ -104,6 +104,14 @@ executables are resolved.
 .\.venv\Scripts\pdf-mcp-server.exe
 ```
 
+The server writes diagnostics to `pdf-semantic-search.log` in its working
+directory and also emits them to stderr. Set `DEBUG=true` in `.env` to include
+debug-level messages:
+
+```dotenv
+DEBUG=true
+```
+
 #### MCP client configuration
 
 The `command` must be the **absolute path** to the script inside `.venv` — MCP clients do not
