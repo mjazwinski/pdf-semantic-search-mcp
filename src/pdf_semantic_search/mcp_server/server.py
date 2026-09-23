@@ -205,8 +205,8 @@ async def search_docs(
             "max_results": max_results,
         })
         return response[0].text
-    except Exception:
-        logger.exception("search_docs failed")
+    except Exception as e:
+        logger.exception(f"search_docs failed {e}")
         raise
 
 
@@ -268,8 +268,8 @@ def main() -> None:
     logger.info("Starting MCP server (debug=%s, log_file=%s).", settings.debug, log_path)
     try:
         mcp.run(transport="stdio")
-    except Exception:
-        logger.exception("MCP server stopped with an error")
+    except Exception as e:
+        logger.exception(f"MCP server stopped with an error: {e}")
         raise
 
 
