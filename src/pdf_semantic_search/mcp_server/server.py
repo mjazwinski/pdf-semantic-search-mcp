@@ -255,7 +255,7 @@ def _result_to_dict(result: SearchResult) -> dict:
 def main() -> None:
     """Run the MCP server on stdio (blocking)."""
     log_level = logging.DEBUG if settings.debug else logging.INFO
-    log_path = Path.cwd() / "pdf-semantic-search.log"
+    log_path = Path(settings.log_path) if settings.log_path else Path.cwd() / "pdf-semantic-search.log"
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
