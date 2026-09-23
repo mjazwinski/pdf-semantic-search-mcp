@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     # ── Diagnostics ──────────────────────────────────────────────────────────
     debug: bool = False
+    log_path: str | None = None
 
     # ── Qdrant ────────────────────────────────────────────────────────────────
     qdrant_host: str = "localhost"

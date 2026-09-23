@@ -105,11 +105,12 @@ executables are resolved.
 ```
 
 The server writes diagnostics to `pdf-semantic-search.log` in its working
-directory and also emits them to stderr. Set `DEBUG=true` in `.env` to include
-debug-level messages:
+directory by default and also emits them to stderr. Set `DEBUG=true` in `.env`
+to include debug-level messages. Set `LOG_PATH` to override the log file path:
 
 ```dotenv
 DEBUG=true
+LOG_PATH=C:\path\to\pdf-semantic-search.log
 ```
 
 #### MCP client configuration
