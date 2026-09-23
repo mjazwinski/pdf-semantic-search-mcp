@@ -324,3 +324,16 @@ def test_fastmcp_list_categories_delegates_to_handler():
         from pdf_semantic_search.mcp_server.server import list_categories
         raw = run(list_categories())
     assert json.loads(raw) == ["intro", "methods"]
+
+
+def test_main_disables_model_loading_progress_bars(tmp_path):
+    import pdf_semantic_search.mcp_server.server as srv
+
+    with (
+        patch("pdf_semantic_search.mcp_server.server._disable_model_progress_bars") as disable,
+        patch.object(srv.mcp, "run"),
+        patch.object(srv.settings, "log_path", str(tmp_path / "server.log")),
+    ):
+        srv.main()
+
+    disable.assert_called_once_with()

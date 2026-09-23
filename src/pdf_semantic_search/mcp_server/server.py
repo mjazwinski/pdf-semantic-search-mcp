@@ -247,6 +247,13 @@ def _result_to_dict(result: SearchResult) -> dict:
     }
 
 
+def _disable_model_progress_bars() -> None:
+    """Disable model-loading progress output that can corrupt MCP stdio."""
+    from transformers.utils import logging as transformers_logging
+
+    transformers_logging.disable_progress_bar()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -254,6 +261,7 @@ def _result_to_dict(result: SearchResult) -> dict:
 
 def main() -> None:
     """Run the MCP server on stdio (blocking)."""
+    _disable_model_progress_bars()
     log_level = logging.DEBUG if settings.debug else logging.INFO
     log_path = Path(settings.log_path) if settings.log_path else Path.cwd() / "pdf-semantic-search.log"
     logging.basicConfig(
