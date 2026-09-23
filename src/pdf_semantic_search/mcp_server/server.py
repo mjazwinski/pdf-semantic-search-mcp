@@ -177,7 +177,8 @@ async def _handle_list_categories() -> list[TextContent]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(name="search_docs",
+          description="Allows to search for information in one of categories listed by the call to list_categories tool.")
 async def search_docs(
     text: str,
     context: Optional[str] = None,
@@ -210,7 +211,8 @@ async def search_docs(
         raise
 
 
-@mcp.tool()
+@mcp.tool(name="list_categories",
+          description="Returns list of semantic categories that can be searched e.g. training, artificial intelligence, motorization.")
 async def list_categories() -> str:
     """Return all distinct category values stored in the Qdrant collection.
 
