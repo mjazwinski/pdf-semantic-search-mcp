@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from mcp.server.mcpserver import MCPServer
@@ -198,11 +199,15 @@ async def search_docs(
         Each object contains: score, text, source_file, page, chunk_index,
         context, category.
     """
-    response = await _handle_search_docs({
-        "query": {"text": text, "context": context, "category": category},
-        "max_results": max_results,
-    })
-    return response[0].text
+    try:
+        response = await _handle_search_docs({
+            "query": {"text": text, "context": context, "category": category},
+            "max_results": max_results,
+        })
+        return response[0].text
+    except Exception:
+        logger.exception("search_docs failed")
+        raise
 
 
 @mcp.tool()
@@ -215,8 +220,12 @@ async def list_categories() -> str:
     Returns:
         JSON array of category strings, sorted alphabetically.
     """
-    response = await _handle_list_categories()
-    return response[0].text
+    try:
+        response = await _handle_list_categories()
+        return response[0].text
+    except Exception:
+        logger.exception("list_categories failed")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -245,11 +254,23 @@ def _result_to_dict(result: SearchResult) -> dict:
 
 def main() -> None:
     """Run the MCP server on stdio (blocking)."""
+    log_level = logging.DEBUG if settings.debug else logging.INFO
+    log_path = Path.cwd() / "pdf-semantic-search.log"
     logging.basicConfig(
-        level=logging.WARNING,
-        format="%(levelname)s %(name)s: %(message)s",
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
+        force=True,
     )
-    mcp.run(transport="stdio")
+    logger.info("Starting MCP server (debug=%s, log_file=%s).", settings.debug, log_path)
+    try:
+        mcp.run(transport="stdio")
+    except Exception:
+        logger.exception("MCP server stopped with an error")
+        raise
 
 
 if __name__ == "__main__":
