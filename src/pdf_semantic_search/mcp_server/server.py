@@ -54,6 +54,7 @@ from pdf_semantic_search.models import DocumentEntry, DocumentQuery
 from pdf_semantic_search.vector_store.qdrant_store import QdrantStore, SearchResult
 
 logger = logging.getLogger(__name__)
+mcp = MCPServer("pdf-semantic-search")
 
 # ---------------------------------------------------------------------------
 # Lazy-initialised dependencies (created once, reused for server lifetime)
