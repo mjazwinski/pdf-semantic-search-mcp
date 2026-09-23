@@ -230,15 +230,15 @@ class QdrantStore:
             category,
         )
 
-        hits = self._client.search(  # type: ignore[union-attr]
+        response = self._client.query_points(  # type: ignore[union-attr]
             collection_name=self.collection,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=query_filter,
             limit=top_k,
             with_payload=True,
         )
 
-        return [self._hit_to_result(h) for h in hits]
+        return [self._hit_to_result(hit) for hit in response.points]
 
     def list_categories(self) -> list[str]:
         """Return all distinct ``category`` values present in the collection.
