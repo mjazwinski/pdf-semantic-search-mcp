@@ -46,7 +46,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.types import TextContent
 
 from pdf_semantic_search.config import settings
@@ -124,7 +125,8 @@ def _reset_deps() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _handle_search_docs(arguments: dict) -> list[TextContent]:
+async def _handle_search_docs(arguments: dict, 
+        mcpContext: Context,) -> list[TextContent]:
     """Embed the query text and return ranked chunks from Qdrant.
 
     Args:
@@ -135,6 +137,7 @@ async def _handle_search_docs(arguments: dict) -> list[TextContent]:
         Single-element list containing a :class:`~mcp.types.TextContent` whose
         ``text`` is a JSON-encoded array of result objects.
     """
+    await mcpContext.report_progress(0, 100, "Building query")
     doc_query = DocumentQuery[DocumentEntry](
         query=DocumentEntry(**arguments.get("query", {})),
         max_results=arguments.get("max_results", 5),
@@ -149,10 +152,11 @@ async def _handle_search_docs(arguments: dict) -> list[TextContent]:
         "search_docs: text=%r context=%r category=%r top_k=%d",
         query_text, context, category, top_k,
     )
-
+    await mcpContext.report_progress(20, 100, "Getting deps")
     deps = _get_deps()
+    await mcpContext.report_progress(30, 100, "Got deps")
     query_vector = deps.embedder.embed([query_text])[0]
-
+    await mcpContext.report_progress(40, 100, "Executing query")
     results: list[SearchResult] = deps.store.search(
         query_vector=query_vector,
         top_k=top_k,
@@ -160,6 +164,7 @@ async def _handle_search_docs(arguments: dict) -> list[TextContent]:
         category=category,
     )
 
+    await mcpContext.report_progress(90, 100, "Processing result")
     payload = [_result_to_dict(r) for r in results]
     return [TextContent(type="text", text=json.dumps(payload, ensure_ascii=False, indent=2))]
 
@@ -181,6 +186,7 @@ async def _handle_list_categories() -> list[TextContent]:
           description="Allows to search for information in one of categories listed by the call to list_categories tool.")
 async def search_docs(
     text: str,
+    mcpContext: Context,
     context: Optional[str] = None,
     category: Optional[str] = None,
     max_results: int = 5,
@@ -204,7 +210,7 @@ async def search_docs(
         response = await _handle_search_docs({
             "query": {"text": text, "context": context, "category": category},
             "max_results": max_results,
-        })
+        }, mcpContext)
         return response[0].text
     except Exception as e:
         logger.exception(f"search_docs failed {e}")
@@ -213,7 +219,7 @@ async def search_docs(
 
 @mcp.tool(name="list_categories",
           description="Returns list of semantic categories that can be searched e.g. training, artificial intelligence, motorization.")
-async def list_categories() -> str:
+async def list_categories(mcpContext: Context) -> str:
     """Return all distinct category values stored in the Qdrant collection.
 
     Use this to discover available document sections before filtering a
@@ -222,6 +228,7 @@ async def list_categories() -> str:
     Returns:
         JSON array of category strings, sorted alphabetically.
     """
+    logger.debug(f"Handling request {mcpContext.request_id} for list_categories")
     try:
         response = await _handle_list_categories()
         return response[0].text

@@ -299,7 +299,7 @@ class QdrantStore:
                 FieldCondition(key="category", match=MatchValue(value=category))
             )
 
-        return Filter(must=must_filters) if must_filters else None
+        return Filter(must=must_filters) if must_filters and len(must_filters) > 0 else None
 
     @staticmethod
     def _hit_to_result(hit) -> SearchResult:
