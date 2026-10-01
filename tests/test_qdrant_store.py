@@ -174,7 +174,7 @@ def test_search_returns_search_results():
         _make_scored_point(0.7, {"text": "chunk2", "source_file": "a.pdf", "page": 1, "chunk_index": 0}),
     ])
 
-    results = store.search(_fake_vector(), top_k=2)
+    results = store.search(_fake_vector(), top_r=2)
 
     assert len(results) == 2
     assert all(isinstance(r, SearchResult) for r in results)
@@ -186,45 +186,21 @@ def test_search_no_filter_passes_none_to_qdrant():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_k=5, context=None, category=None)
+    store.search(_fake_vector(), top_r=5, category=None)
 
     _, kwargs = mock_client.query_points.call_args
     assert kwargs["query_filter"] is None
-
-
-def test_search_context_filter_applied():
-    store, mock_client = _make_connected_store()
-    mock_client.query_points.return_value = _make_query_response([])
-
-    store.search(_fake_vector(), top_k=5, context="doc.pdf")
-
-    _, kwargs = mock_client.query_points.call_args
-    flt = kwargs["query_filter"]
-    assert flt is not None
-    assert any(c.key == "context" for c in flt.must)
 
 
 def test_search_category_filter_applied():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_k=5, category="introduction")
+    store.search(_fake_vector(), top_r=5, category="introduction")
 
     _, kwargs = mock_client.query_points.call_args
     flt = kwargs["query_filter"]
     assert any(c.key == "category" for c in flt.must)
-
-
-def test_search_both_filters_combined():
-    store, mock_client = _make_connected_store()
-    mock_client.query_points.return_value = _make_query_response([])
-
-    store.search(_fake_vector(), top_k=3, context="doc.pdf", category="ch1")
-
-    _, kwargs = mock_client.query_points.call_args
-    flt = kwargs["query_filter"]
-    keys = {c.key for c in flt.must}
-    assert keys == {"context", "category"}
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +268,7 @@ def test_real_upsert_and_search():
         },
     }])
 
-    results = store.search(vector, top_k=1)
+    results = store.search(vector, top_r=1)
     assert len(results) == 1
     assert results[0].text == "integration test chunk"
     assert results[0].score > 0.99  # same vector → near-perfect match

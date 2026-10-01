@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,7 @@ from pdf_semantic_search.vector_store.qdrant_store import SearchResult
 # Helpers
 # ---------------------------------------------------------------------------
 
+mcp_context = AsyncMock()
 
 def run(coro):
     """Run a coroutine synchronously — no pytest-asyncio needed."""
@@ -108,7 +109,7 @@ def test_result_to_dict_none_fields_preserved():
 def test_search_docs_returns_single_text_content():
     deps = _make_deps(search_results=[_make_result()])
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        results = run(_handle_search_docs({"query": {"text": "attention mechanism"}}))
+        results = run(_handle_search_docs({"query": {"text": "attention mechanism"}}, mcp_context))
     assert len(results) == 1
     assert results[0].type == "text"
 
@@ -116,7 +117,7 @@ def test_search_docs_returns_single_text_content():
 def test_search_docs_response_is_valid_json():
     deps = _make_deps(search_results=[_make_result()])
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        results = run(_handle_search_docs({"query": {"text": "test query"}}))
+        results = run(_handle_search_docs({"query": {"text": "test query"}}, mcp_context))
     parsed = json.loads(results[0].text)
     assert isinstance(parsed, list)
 
@@ -124,7 +125,7 @@ def test_search_docs_response_is_valid_json():
 def test_search_docs_result_structure():
     deps = _make_deps(search_results=[_make_result(score=0.88, text="chunk", page=2)])
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        results = run(_handle_search_docs({"query": {"text": "q"}}))
+        results = run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
     item = json.loads(results[0].text)[0]
     assert item["score"] == 0.88
     assert item["text"] == "chunk"
@@ -134,14 +135,14 @@ def test_search_docs_result_structure():
 def test_search_docs_empty_results_returns_empty_array():
     deps = _make_deps(search_results=[])
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        results = run(_handle_search_docs({"query": {"text": "nothing matches"}}))
+        results = run(_handle_search_docs({"query": {"text": "nothing matches"}}, mcp_context))
     assert json.loads(results[0].text) == []
 
 
 def test_search_docs_embeds_query_text():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "my search query"}}))
+        run(_handle_search_docs({"query": {"text": "my search query"}}, mcp_context))
     deps.embedder.embed.assert_called_once_with(["my search query"])
 
 
@@ -149,45 +150,37 @@ def test_search_docs_passes_vector_to_store():
     fake_vector = [0.9, 0.8, 0.7, 0.6]
     deps = _make_deps(embed_vector=fake_vector)
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "q"}}))
+        run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
     call_kwargs = deps.store.search.call_args.kwargs
     assert call_kwargs["query_vector"] == fake_vector
 
 
-def test_search_docs_passes_top_k():
+def test_search_docs_passes_top_r():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "q"}, "max_results": 12}))
-    assert deps.store.search.call_args.kwargs["top_k"] == 12
+        run(_handle_search_docs({"query": {"text": "q"}, "max_results": 12}, mcp_context))
+    assert deps.store.search.call_args.kwargs["top_r"] == 12
 
 
-def test_search_docs_default_top_k_is_5():
+def test_search_docs_default_top_r_is_5():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "q"}}))
-    assert deps.store.search.call_args.kwargs["top_k"] == 5
-
-
-def test_search_docs_forwards_context_filter():
-    deps = _make_deps()
-    with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "q", "context": "report.pdf"}}))
-    assert deps.store.search.call_args.kwargs["context"] == "report.pdf"
+        run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
+    assert deps.store.search.call_args.kwargs["top_r"] == 5
 
 
 def test_search_docs_forwards_category_filter():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "q", "category": "methods"}}))
+        run(_handle_search_docs({"query": {"text": "q", "category": "methods"}}, mcp_context))
     assert deps.store.search.call_args.kwargs["category"] == "methods"
 
 
 def test_search_docs_no_filter_passes_none():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        run(_handle_search_docs({"query": {"text": "q"}}))
+        run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
     kwargs = deps.store.search.call_args.kwargs
-    assert kwargs["context"] is None
     assert kwargs["category"] is None
 
 
@@ -195,7 +188,7 @@ def test_search_docs_invalid_query_raises():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         with pytest.raises(Exception):  # Pydantic ValidationError — missing 'text'
-            run(_handle_search_docs({"query": {}}))
+            run(_handle_search_docs({"query": {}}, mcp_context))
 
 
 def test_search_docs_multiple_results_ordered():
@@ -206,7 +199,7 @@ def test_search_docs_multiple_results_ordered():
     ]
     deps = _make_deps(search_results=results)
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-        response = run(_handle_search_docs({"query": {"text": "q"}}))
+        response = run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
     parsed = json.loads(response[0].text)
     assert len(parsed) == 3
     assert parsed[0]["text"] == "best match"
@@ -300,7 +293,7 @@ def test_fastmcp_search_docs_delegates_to_handler():
     deps = _make_deps(search_results=[_make_result(score=0.88, text="NLP chunk")])
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         from pdf_semantic_search.mcp_server.server import search_docs
-        raw = run(search_docs(text="attention mechanism"))
+        raw = run(search_docs(text="attention mechanism", mcpContext=mcp_context))
     parsed = json.loads(raw)
     assert isinstance(parsed, list)
     assert parsed[0]["text"] == "NLP chunk"
@@ -311,18 +304,17 @@ def test_fastmcp_search_docs_forwards_filters():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         from pdf_semantic_search.mcp_server.server import search_docs
-        run(search_docs(text="query", context="doc.pdf", category="intro", max_results=7))
+        run(search_docs(text="query", mcpContext=mcp_context, category="intro", max_results=7))
     kwargs = deps.store.search.call_args.kwargs
-    assert kwargs["context"] == "doc.pdf"
     assert kwargs["category"] == "intro"
-    assert kwargs["top_k"] == 7
+    assert kwargs["top_r"] == 7
 
 
 def test_fastmcp_list_categories_delegates_to_handler():
     deps = _make_deps(categories=["intro", "methods"])
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         from pdf_semantic_search.mcp_server.server import list_categories
-        raw = run(list_categories())
+        raw = run(list_categories(AsyncMock()))
     assert json.loads(raw) == ["intro", "methods"]
 
 

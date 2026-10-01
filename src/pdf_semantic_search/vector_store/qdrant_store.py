@@ -201,15 +201,14 @@ class QdrantStore:
     def search(
         self,
         query_vector: list[float],
-        top_k: int = 5,
-        context: Optional[str] = None,
+        top_r: int = 5,
         category: Optional[str] = None,
     ) -> list[SearchResult]:
-        """Return the *top_k* most similar chunks to *query_vector*.
+        """Return the *top_r* most similar chunks to *query_vector*.
 
         Args:
             query_vector: Embedding of the search query (same dim as stored vectors).
-            top_k:        Maximum number of results to return.
+            top_r:        Maximum number of results to return.
             context:      If set, restricts results to points whose payload
                           ``context`` field exactly matches this value.
             category:     If set, restricts results to points whose payload
@@ -220,13 +219,12 @@ class QdrantStore:
         """
         self._connect()
 
-        query_filter = self._build_filter(context=context, category=category)
+        query_filter = self._build_filter(category=category)
 
         logger.debug(
-            "Searching %r — top_k=%d, context=%r, category=%r",
+            "Searching %r — top_r=%d, context=%r, category=%r",
             self.collection,
-            top_k,
-            context,
+            top_r,
             category,
         )
 
@@ -234,7 +232,7 @@ class QdrantStore:
             collection_name=self.collection,
             query=query_vector,
             query_filter=query_filter,
-            limit=top_k,
+            limit=top_r,
             with_payload=True,
         )
 
@@ -281,7 +279,6 @@ class QdrantStore:
 
     @staticmethod
     def _build_filter(
-        context: Optional[str],
         category: Optional[str],
     ):
         """Build a Qdrant ``Filter`` from optional keyword constraints.
@@ -290,10 +287,6 @@ class QdrantStore:
         """
         must_filters: list[Condition] = []
 
-        if context is not None:
-            must_filters.append(
-                FieldCondition(key="context", match=MatchValue(value=context))
-            )
         if category is not None:
             must_filters.append(
                 FieldCondition(key="category", match=MatchValue(value=category))

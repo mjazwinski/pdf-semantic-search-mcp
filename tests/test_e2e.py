@@ -19,7 +19,7 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -179,7 +179,7 @@ class TestIngestionToMCPSearch:
         deps = self._make_deps(results=[result])
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = run(_handle_search_docs({"query": {"text": "NLP"}}))
+            response = run(_handle_search_docs({"query": {"text": "NLP"}}, mcpContext=AsyncMock()))
 
         item = json.loads(response[0].text)[0]
         assert item["score"] == 0.95
@@ -195,20 +195,19 @@ class TestIngestionToMCPSearch:
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
             run(_handle_search_docs({
-                "query": {"text": "test", "context": "q4-report.pdf"},
+                "query": {"text": "test"},
                 "max_results": 3,
-            }))
+            }, mcpContext=AsyncMock()))
 
         kwargs = deps.store.search.call_args.kwargs
-        assert kwargs["context"] == "q4-report.pdf"
-        assert kwargs["top_k"] == 3
+        assert kwargs["top_r"] == 3
 
     def test_category_filter_propagates_to_store(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
         deps = self._make_deps()
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            run(_handle_search_docs({"query": {"text": "test", "category": "conclusions"}}))
+            run(_handle_search_docs({"query": {"text": "test", "category": "conclusions"}}, mcpContext=AsyncMock()))
 
         assert deps.store.search.call_args.kwargs["category"] == "conclusions"
 
@@ -226,7 +225,7 @@ class TestIngestionToMCPSearch:
         deps = self._make_deps(results=[])
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = run(_handle_search_docs({"query": {"text": "obscure topic"}}))
+            response = run(_handle_search_docs({"query": {"text": "obscure topic"}}, mcpContext=AsyncMock()))
 
         assert json.loads(response[0].text) == []
 
@@ -282,11 +281,12 @@ class TestFullStackPayloadConsistency:
 
         search_embedder = make_mock_embedder(dim=4)
         search_store = MagicMock()
+        
         search_store.search.return_value = [fake_result]
         deps = _Deps(embedder=search_embedder, store=search_store)
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            response = run(_handle_search_docs({"query": {"text": "test sentence"}}))
+            response = run(_handle_search_docs({"query": {"text": "test sentence"}}, mcpContext=AsyncMock()))
 
         item = json.loads(response[0].text)[0]
 
@@ -358,7 +358,7 @@ class TestTrueIntegration:
         assert total > 0
 
         query_vec = embedder.embed(["self-attention"])[0]
-        results = store.search(query_vec, top_k=3, context="integration.pdf")
+        results = store.search(query_vec, top_r=3)
         assert len(results) > 0
         assert results[0].score > 0.5
         assert "attention" in results[0].text.lower()
@@ -384,6 +384,8 @@ class TestTrueIntegration:
         store = QdrantStore("localhost", 6333, self.COLLECTION, self.DIM)
         store._connect()
 
+        mcp_context = AsyncMock()
+
         svc = IngestionService(PyMuPDFParser(), embedder, store)
         svc.ingest(pdf_path, chunk_size=200, overlap=20, context="mcp_test.pdf", category="ml")
 
@@ -392,7 +394,7 @@ class TestTrueIntegration:
             response = run(_handle_search_docs({
                 "query": {"text": "deep learning representations", "category": "ml"},
                 "max_results": 3,
-            }))
+            }, mcpContext=mcp_context))
 
         results = json.loads(response[0].text)
         assert len(results) > 0

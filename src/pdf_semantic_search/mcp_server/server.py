@@ -144,13 +144,12 @@ async def _handle_search_docs(arguments: dict,
     )
 
     query_text = doc_query.query.text
-    context    = doc_query.query.context
     category   = doc_query.query.category
-    top_k      = doc_query.max_results
+    top_r      = doc_query.max_results
 
     logger.debug(
-        "search_docs: text=%r context=%r category=%r top_k=%d",
-        query_text, context, category, top_k,
+        "search_docs: text=%r category=%r top_r=%d",
+        query_text, category, top_r,
     )
     await mcpContext.report_progress(20, 100, "Getting deps")
     deps = _get_deps()
@@ -159,8 +158,7 @@ async def _handle_search_docs(arguments: dict,
     await mcpContext.report_progress(40, 100, "Executing query")
     results: list[SearchResult] = deps.store.search(
         query_vector=query_vector,
-        top_k=top_k,
-        context=context,
+        top_r=top_r,
         category=category,
     )
 
@@ -177,6 +175,18 @@ async def _handle_list_categories() -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(categories, ensure_ascii=False))]
 
 
+# --------------------------
+# MCP resource registration 
+# --------------------------
+
+@mcp.resource("usage://extended_description")
+def get_config() -> str:
+    """Extended description of this MCP for less capabable harnesses"""
+    return """pdf-semantic-search-mcp provides access to data in categories you can get by calling list_categories tool. 
+    If one of categories matches current subject you can serch for terms or sentences (eg. car engine or what car engines can I put in VW Golf)
+    To execute search use search_docs tool passing category and search term/sentence
+    """
+
 # ---------------------------------------------------------------------------
 # MCP tool registration  (thin wrappers — schema inferred from signatures)
 # ---------------------------------------------------------------------------
@@ -187,7 +197,6 @@ async def _handle_list_categories() -> list[TextContent]:
 async def search_docs(
     text: str,
     mcpContext: Context,
-    context: Optional[str] = None,
     category: Optional[str] = None,
     max_results: int = 5,
 ) -> str:
@@ -208,7 +217,7 @@ async def search_docs(
     """
     try:
         response = await _handle_search_docs({
-            "query": {"text": text, "context": context, "category": category},
+            "query": {"text": text, "category": category},
             "max_results": max_results,
         }, mcpContext)
         return response[0].text
