@@ -74,6 +74,14 @@ def ingest(
             "Used as a Qdrant filter in search (e.g. document section or topic)."
         ),
     ),
+    version: Optional[str] = typer.Option(
+        None,
+        "--version",
+        help=(
+            "Version string stored in every chunk's 'version' payload field. "
+            "Used as a Qdrant filter in search (e.g. 'v2' or '2024-Q1')."
+        ),
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose", "-v",
@@ -98,6 +106,7 @@ def ingest(
     console.print(f"  [bold]Chunk size:[/bold] {chunk_size} chars  |  [bold]Overlap:[/bold] {overlap} chars")
     console.print(f"  [bold]Batch size:[/bold] {batch_size}")
     console.print(f"  [bold]Category:[/bold]   {category!r}")
+    console.print(f"  [bold]Version:[/bold]    {version!r}")
     console.print(
         f"  [bold]Qdrant:[/bold]     {settings.qdrant_host}:{settings.qdrant_port}  "
         f"collection=[cyan]{settings.qdrant_collection}[/cyan]"
@@ -165,6 +174,7 @@ def ingest(
                 overlap=overlap,
                 batch_size=batch_size,
                 category=category,
+                version=version,
             )
         except FileNotFoundError as exc:
             console.print(f"[red]✗ File not found:[/red] {exc}")

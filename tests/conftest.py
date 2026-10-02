@@ -127,6 +127,7 @@ def make_search_result(
     page: int = 0,
     chunk_index: int = 0,
     category: str | None = "intro",
+    version: str | None = None,
 ) -> SearchResult:
     """Build a :class:`SearchResult` with sensible defaults."""
     return SearchResult(
@@ -136,5 +137,6 @@ def make_search_result(
         page=page,
         chunk_index=chunk_index,
         category=category,
+        version=version,
         metadata={},
     )

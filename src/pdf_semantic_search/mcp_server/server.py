@@ -145,11 +145,12 @@ async def _handle_search_docs(arguments: dict,
 
     query_text = doc_query.query.text
     category   = doc_query.query.category
+    version    = doc_query.query.version
     top_r      = doc_query.max_results
 
     logger.debug(
-        "search_docs: text=%r category=%r top_r=%d",
-        query_text, category, top_r,
+        "search_docs: text=%r category=%r version=%r top_r=%d",
+        query_text, category, version, top_r,
     )
     await mcpContext.report_progress(20, 100, "Getting deps")
     deps = _get_deps()
@@ -160,6 +161,7 @@ async def _handle_search_docs(arguments: dict,
         query_vector=query_vector,
         top_r=top_r,
         category=category,
+        version=version,
     )
 
     await mcpContext.report_progress(90, 100, "Processing result")
@@ -198,6 +200,7 @@ async def search_docs(
     text: str,
     mcpContext: Context,
     category: Optional[str] = None,
+    version: Optional[str] = None,
     max_results: int = 5,
 ) -> str:
     """Perform semantic search over ingested PDF documents.
@@ -206,15 +209,18 @@ async def search_docs(
         text:        Natural-language query string.
         category:    Optional. Filter results to a specific section or category
                      (matches the ``category`` payload field set during ingestion).
+        version:     Optional. Filter results to a specific document version
+                     (matches the ``version`` payload field set during ingestion).
         max_results: Maximum number of chunks to return (1–100, default 5).
 
     Returns:
         JSON array of result objects ordered by descending relevance score.
-        Each object contains: score, text, source_file, page, chunk_index, category.
+        Each object contains: score, text, source_file, page, chunk_index,
+        category, version.
     """
     try:
         response = await _handle_search_docs({
-            "query": {"text": text, "category": category},
+            "query": {"text": text, "category": category, "version": version},
             "max_results": max_results,
         }, mcpContext)
         return response[0].text
@@ -258,6 +264,7 @@ def _result_to_dict(result: SearchResult) -> dict:
         "page":        result.page,
         "chunk_index": result.chunk_index,
         "category":    result.category,
+        "version":     result.version,
     }
 
 

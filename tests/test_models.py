@@ -18,12 +18,19 @@ def test_entry_requires_text():
 def test_entry_optional_fields_default_to_none():
     entry = DocumentEntry(text="hello")
     assert entry.category is None
+    assert entry.version is None
 
 
 def test_entry_with_all_fields():
-    entry = DocumentEntry(text="hello", category="intro")
+    entry = DocumentEntry(text="hello", category="intro", version="v2")
     assert entry.text == "hello"
     assert entry.category == "intro"
+    assert entry.version == "v2"
+
+
+def test_entry_version_accepts_arbitrary_string():
+    for v in ("v1", "2024-Q1", "latest", "1.0.0"):
+        assert DocumentEntry(text="x", version=v).version == v
 
 
 # ---------------------------------------------------------------------------

@@ -39,12 +39,19 @@ class DocumentEntry(BaseModel):
         category: Optional label for a logical section or topic within a
                   document — e.g. a chapter name or document section.  Also
                   used as a Qdrant payload filter.
+        version:  Optional version string of the document (e.g. ``"v2"`` or
+                  ``"2024-Q1"``).  Stored in the Qdrant payload during
+                  ingestion and used as a filter during search.
     """
 
     text: str = Field(..., description="Text content to ingest or search by.")
     category: Optional[str] = Field(
         default=None,
         description="Narrows search to a specific category or section (Qdrant filter).",
+    )
+    version: Optional[str] = Field(
+        default=None,
+        description="Version of the document to search (Qdrant filter).",
     )
 
 

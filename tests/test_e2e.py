@@ -242,7 +242,7 @@ class TestFullStackPayloadConsistency:
         with patch("fitz.open", return_value=fake_doc):
             with patch.object(Path, "exists", return_value=True):
                 svc = IngestionService(PyMuPDFParser(), embedder, mock_store)
-                svc.ingest(Path("/fake/test.pdf"), category="testing")
+                svc.ingest(Path("/fake/test.pdf"), category="testing", version="v2")
 
         assert captured_points, "No points were ingested"
         ingested_payload = captured_points[0]["payload"]
@@ -255,6 +255,7 @@ class TestFullStackPayloadConsistency:
             page=ingested_payload["page"],
             chunk_index=ingested_payload["chunk_index"],
             category=ingested_payload["category"],
+            version=ingested_payload["version"],
             metadata=ingested_payload,
         )
 
@@ -274,6 +275,7 @@ class TestFullStackPayloadConsistency:
         assert item["page"]        == ingested_payload["page"]
         assert item["chunk_index"] == ingested_payload["chunk_index"]
         assert item["category"]    == ingested_payload["category"]
+        assert item["version"]     == ingested_payload["version"]
         assert item["score"]       == 0.99
 
 

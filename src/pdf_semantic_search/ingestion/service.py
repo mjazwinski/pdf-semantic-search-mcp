@@ -17,6 +17,7 @@ plus the two optional filter fields from
         "page":        int,   # 0-based page index
         "chunk_index": int,   # position within page
         "category":    str?,  # optional — used for Qdrant filtering
+        "version":     str?,  # optional — used for Qdrant filtering
     }
 """
 from __future__ import annotations
@@ -65,6 +66,7 @@ class IngestionService:
         overlap: int = 64,
         batch_size: int = 64,
         category: Optional[str] = None,
+        version: Optional[str] = None,
     ) -> int:
         """Parse *pdf_path*, embed chunks in batches, and upsert to Qdrant.
 
@@ -77,6 +79,9 @@ class IngestionService:
                         reduce peak memory usage.
             category:   Optional label stored in every point's payload
                         ``category`` field (e.g. a document section or topic).
+                        Enables Qdrant filtering on this field at search time.
+            version:    Optional version string stored in every point's payload
+                        ``version`` field (e.g. ``"v2"`` or ``"2024-Q1"``).
                         Enables Qdrant filtering on this field at search time.
 
         Returns:
@@ -120,6 +125,7 @@ class IngestionService:
                         "page": chunk.page,
                         "chunk_index": chunk.chunk_index,
                         "category": category,
+                        "version": version,
                     },
                 }
                 for chunk, vector in zip(batch, vectors)

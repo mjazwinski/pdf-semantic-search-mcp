@@ -186,7 +186,7 @@ def test_search_no_filter_passes_none_to_qdrant():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_r=5, category=None)
+    store.search(_fake_vector(), top_r=5, category=None, version=None)
 
     _, kwargs = mock_client.query_points.call_args
     assert kwargs["query_filter"] is None
@@ -201,6 +201,29 @@ def test_search_category_filter_applied():
     _, kwargs = mock_client.query_points.call_args
     flt = kwargs["query_filter"]
     assert any(c.key == "category" for c in flt.must)
+
+
+def test_search_version_filter_applied():
+    store, mock_client = _make_connected_store()
+    mock_client.query_points.return_value = _make_query_response([])
+
+    store.search(_fake_vector(), top_r=5, version="v2")
+
+    _, kwargs = mock_client.query_points.call_args
+    flt = kwargs["query_filter"]
+    assert flt is not None
+    assert any(c.key == "version" for c in flt.must)
+
+
+def test_search_category_and_version_combined():
+    store, mock_client = _make_connected_store()
+    mock_client.query_points.return_value = _make_query_response([])
+
+    store.search(_fake_vector(), top_r=3, category="intro", version="v2")
+
+    _, kwargs = mock_client.query_points.call_args
+    keys = {c.key for c in kwargs["query_filter"].must}
+    assert keys == {"category", "version"}
 
 
 # ---------------------------------------------------------------------------

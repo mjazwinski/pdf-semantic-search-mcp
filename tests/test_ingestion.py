@@ -118,7 +118,7 @@ def test_ingest_single_batch_when_chunks_fit():
 def test_ingest_payload_contains_required_fields():
     chunks = _make_chunks(1)
     service, _, _, store = _make_service(chunks)
-    service.ingest(Path("doc.pdf"), category="intro")
+    service.ingest(Path("doc.pdf"), category="intro", version="v2")
 
     points = store.upsert.call_args.args[0]
     payload = points[0]["payload"]
@@ -128,14 +128,16 @@ def test_ingest_payload_contains_required_fields():
     assert payload["page"] == 0
     assert payload["chunk_index"] == 0
     assert payload["category"] == "intro"
+    assert payload["version"] == "v2"
 
 
-def test_ingest_payload_none_category_by_default():
+def test_ingest_payload_none_category_and_version_by_default():
     service, _, _, store = _make_service(_make_chunks(1))
     service.ingest(Path("doc.pdf"))
 
     payload = store.upsert.call_args.args[0][0]["payload"]
     assert payload["category"] is None
+    assert payload["version"] is None
 
 
 def test_ingest_vector_matches_embed_output():
@@ -260,4 +262,32 @@ def test_cli_passes_category(tmp_path):
 
     kwargs = mock_svc.ingest.call_args.kwargs
     assert kwargs["category"] == "finance"
+
+
+def test_cli_passes_version(tmp_path):
+    pdf = tmp_path / "test.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    patches = _mock_dependencies(_make_chunks(1))
+    with patches[0], patches[1], patches[2], patches[3] as mock_svc_cls:
+        mock_svc = mock_svc_cls.return_value
+        mock_svc.ingest.return_value = 1
+        runner.invoke(app, [str(pdf), "--version", "v2"])
+
+    kwargs = mock_svc.ingest.call_args.kwargs
+    assert kwargs["version"] == "v2"
+
+
+def test_cli_version_defaults_to_none(tmp_path):
+    pdf = tmp_path / "test.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    patches = _mock_dependencies(_make_chunks(1))
+    with patches[0], patches[1], patches[2], patches[3] as mock_svc_cls:
+        mock_svc = mock_svc_cls.return_value
+        mock_svc.ingest.return_value = 1
+        runner.invoke(app, [str(pdf)])
+
+    kwargs = mock_svc.ingest.call_args.kwargs
+    assert kwargs["version"] is None
 

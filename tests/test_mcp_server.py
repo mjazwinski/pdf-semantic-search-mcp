@@ -41,6 +41,7 @@ def _make_result(
     page: int = 0,
     chunk_index: int = 0,
     category: str | None = "intro",
+    version: str | None = None,
 ) -> SearchResult:
     return SearchResult(
         score=score,
@@ -49,6 +50,7 @@ def _make_result(
         page=page,
         chunk_index=chunk_index,
         category=category,
+        version=version,
         metadata={},
     )
 
@@ -84,7 +86,7 @@ def reset_singleton():
 def test_result_to_dict_contains_all_fields():
     r = _make_result()
     d = _result_to_dict(r)
-    assert set(d.keys()) == {"score", "text", "source_file", "page", "chunk_index", "category"}
+    assert set(d.keys()) == {"score", "text", "source_file", "page", "chunk_index", "category", "version"}
 
 
 def test_result_to_dict_score_rounded():
@@ -173,12 +175,20 @@ def test_search_docs_forwards_category_filter():
     assert deps.store.search.call_args.kwargs["category"] == "methods"
 
 
+def test_search_docs_forwards_version_filter():
+    deps = _make_deps()
+    with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
+        run(_handle_search_docs({"query": {"text": "q", "version": "v2"}}, mcp_context))
+    assert deps.store.search.call_args.kwargs["version"] == "v2"
+
+
 def test_search_docs_no_filter_passes_none():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
     kwargs = deps.store.search.call_args.kwargs
     assert kwargs["category"] is None
+    assert kwargs["version"] is None
 
 
 def test_search_docs_invalid_query_raises():

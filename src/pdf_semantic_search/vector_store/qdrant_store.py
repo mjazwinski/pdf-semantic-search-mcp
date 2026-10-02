@@ -11,11 +11,12 @@ following keys.  All keys are indexed so they can be used as Qdrant filters:
         "page":        int,   # 0-based page index
         "chunk_index": int,   # position within that page's chunks
         "category":    str?,  # optional — maps to DocumentEntry.category
+        "version":     str?,  # optional — maps to DocumentEntry.version
     }
 
 Filter behaviour in search()
 -----------------------------
-``category`` is forwarded as Qdrant ``must`` conditions so
+``category`` and ``version`` are forwarded as Qdrant ``must`` conditions so
 only points that match *all* supplied filters are returned.  Omitting a filter
 field (``None``) means "no restriction on this field".
 """
@@ -66,6 +67,7 @@ class SearchResult:
     page: int
     chunk_index: int
     category: Optional[str]
+    version: Optional[str]
     metadata: dict = field(default_factory=dict)
 
 
@@ -138,7 +140,7 @@ class QdrantStore:
         Called once after the collection is first created.  Qdrant requires
         explicit indexes for efficient payload filtering.
         """
-        for field_name in ("category", "source_file"):
+        for field_name in ("category", "version", "source_file"):
             self._client.create_payload_index(  # type: ignore[union-attr]
                 collection_name=self.collection,
                 field_name=field_name,
@@ -200,6 +202,7 @@ class QdrantStore:
         query_vector: list[float],
         top_r: int = 5,
         category: Optional[str] = None,
+        version: Optional[str] = None,
     ) -> list[SearchResult]:
         """Return the *top_r* most similar chunks to *query_vector*.
 
@@ -208,19 +211,22 @@ class QdrantStore:
             top_r:        Maximum number of results to return.
             category:     If set, restricts results to points whose payload
                           ``category`` field exactly matches this value.
+            version:      If set, restricts results to points whose payload
+                          ``version`` field exactly matches this value.
 
         Returns:
             List of :class:`SearchResult` objects ordered by descending score.
         """
         self._connect()
 
-        query_filter = self._build_filter(category=category)
+        query_filter = self._build_filter(category=category, version=version)
 
         logger.debug(
-            "Searching %r — top_r=%d, category=%r",
+            "Searching %r — top_r=%d, category=%r, version=%r",
             self.collection,
             top_r,
             category,
+            version,
         )
 
         response = self._client.query_points(  # type: ignore[union-attr]
@@ -275,10 +281,11 @@ class QdrantStore:
     @staticmethod
     def _build_filter(
         category: Optional[str],
+        version: Optional[str] = None,
     ):
         """Build a Qdrant ``Filter`` from optional keyword constraints.
 
-        Returns ``None`` if neither field is set (no filtering applied).
+        Returns ``None`` if no fields are set (no filtering applied).
         """
         must_filters: list[Condition] = []
 
@@ -286,8 +293,12 @@ class QdrantStore:
             must_filters.append(
                 FieldCondition(key="category", match=MatchValue(value=category))
             )
+        if version is not None:
+            must_filters.append(
+                FieldCondition(key="version", match=MatchValue(value=version))
+            )
 
-        return Filter(must=must_filters) if must_filters and len(must_filters) > 0 else None
+        return Filter(must=must_filters) if must_filters else None
 
     @staticmethod
     def _hit_to_result(hit) -> SearchResult:
@@ -300,5 +311,6 @@ class QdrantStore:
             page=payload.get("page", 0),
             chunk_index=payload.get("chunk_index", 0),
             category=payload.get("category"),
+            version=payload.get("version"),
             metadata=payload,
         )
