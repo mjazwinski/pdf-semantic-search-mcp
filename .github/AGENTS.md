@@ -149,7 +149,7 @@ src/pdf_semantic_search/
 - stdio transport (default for local/desktop MCP clients)
 
 #### Exposed Tools
-- `search_docs(text, context?, category?, max_results?)` → JSON array of SearchResult objects
+- `search_docs(text, category?, max_results?)` → JSON array of SearchResult objects
 - `list_categories()` → JSON array of distinct category strings
 
 #### Testing the Server with MCP Clients

@@ -3,7 +3,7 @@
 Design notes
 ------------
 * ``DocumentEntry`` is the base unit of information — it carries the text payload
-  plus two optional filter fields (``context`` and ``category``) that map directly
+  plus optional filter field (`category``) that map directly
   to Qdrant payload filters.
 
 * ``DocumentQuery`` is *generic* over any subclass of ``DocumentEntry`` (bound via
@@ -36,19 +36,12 @@ class DocumentEntry(BaseModel):
     Attributes:
         text:     The raw text to embed and store (ingestion) or the natural-
                   language query string (search).
-        context:  Optional free-form label used to narrow Qdrant results via a
-                  payload filter — e.g. the originating document's filename or
-                  title.
         category: Optional label for a logical section or topic within a
                   document — e.g. a chapter name or document section.  Also
                   used as a Qdrant payload filter.
     """
 
     text: str = Field(..., description="Text content to ingest or search by.")
-    context: Optional[str] = Field(
-        default=None,
-        description="Narrows search to a specific document / source (Qdrant filter).",
-    )
     category: Optional[str] = Field(
         default=None,
         description="Narrows search to a specific category or section (Qdrant filter).",

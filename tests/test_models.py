@@ -17,14 +17,12 @@ def test_entry_requires_text():
 
 def test_entry_optional_fields_default_to_none():
     entry = DocumentEntry(text="hello")
-    assert entry.context is None
     assert entry.category is None
 
 
 def test_entry_with_all_fields():
-    entry = DocumentEntry(text="hello", context="doc.pdf", category="intro")
+    entry = DocumentEntry(text="hello", category="intro")
     assert entry.text == "hello"
-    assert entry.context == "doc.pdf"
     assert entry.category == "intro"
 
 
@@ -56,7 +54,7 @@ def test_query_works_with_entry_subclass():
     class RichEntry(DocumentEntry):
         tags: list[str] = []
 
-    rich = RichEntry(text="BERT", context="paper.pdf", tags=["nlp"])
+    rich = RichEntry(text="BERT", tags=["nlp"])
     q: DocumentQuery[RichEntry] = DocumentQuery(query=rich, max_results=3)
 
     assert q.query.tags == ["nlp"]

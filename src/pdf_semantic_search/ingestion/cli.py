@@ -6,7 +6,7 @@ Usage
     pdf-ingest path/to/document.pdf
 
     # With options
-    pdf-ingest report.pdf --chunk-size 256 --overlap 32 --context "Q4 Report" --category "finance"
+    pdf-ingest report.pdf --chunk-size 256 --overlap 32 --category "finance"
 
     # Directly
     python -m pdf_semantic_search.ingestion.cli path/to/document.pdf
@@ -66,15 +66,6 @@ def ingest(
         "--batch-size", "-b",
         help="Number of chunks to embed and upsert per batch.",
     ),
-    context: Optional[str] = typer.Option(
-        None,
-        "--context",
-        help=(
-            "Label stored in every chunk's 'context' payload field. "
-            "Used as a Qdrant filter in search (e.g. document name or title). "
-            "Defaults to the PDF filename."
-        ),
-    ),
     category: Optional[str] = typer.Option(
         None,
         "--category",
@@ -100,14 +91,12 @@ def ingest(
     # ── Resolve defaults ──────────────────────────────────────────────────────
     chunk_size = chunk_size or settings.default_chunk_size
     overlap = overlap or settings.default_chunk_overlap
-    context = context or pdf_path.name   # default context = filename
 
     # ── Banner ────────────────────────────────────────────────────────────────
     console.rule("[bold blue]PDF Semantic Search — Ingestion")
     console.print(f"  [bold]File:[/bold]       {pdf_path}")
     console.print(f"  [bold]Chunk size:[/bold] {chunk_size} chars  |  [bold]Overlap:[/bold] {overlap} chars")
     console.print(f"  [bold]Batch size:[/bold] {batch_size}")
-    console.print(f"  [bold]Context:[/bold]    {context!r}")
     console.print(f"  [bold]Category:[/bold]   {category!r}")
     console.print(
         f"  [bold]Qdrant:[/bold]     {settings.qdrant_host}:{settings.qdrant_port}  "
@@ -175,7 +164,6 @@ def ingest(
                 chunk_size=chunk_size,
                 overlap=overlap,
                 batch_size=batch_size,
-                context=context,
                 category=category,
             )
         except FileNotFoundError as exc:

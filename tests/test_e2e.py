@@ -182,19 +182,6 @@ class TestIngestionToMCPSearch:
         assert "source_file" in item
         assert "category" in item
 
-    def test_context_filter_propagates_to_store(self):
-        from pdf_semantic_search.mcp_server.server import _handle_search_docs
-        deps = self._make_deps()
-
-        with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
-            run(_handle_search_docs({
-                "query": {"text": "test"},
-                "max_results": 3,
-            }, mcpContext=AsyncMock()))
-
-        kwargs = deps.store.search.call_args.kwargs
-        assert kwargs["top_r"] == 3
-
     def test_category_filter_propagates_to_store(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
         deps = self._make_deps()
@@ -255,7 +242,7 @@ class TestFullStackPayloadConsistency:
         with patch("fitz.open", return_value=fake_doc):
             with patch.object(Path, "exists", return_value=True):
                 svc = IngestionService(PyMuPDFParser(), embedder, mock_store)
-                svc.ingest(Path("/fake/test.pdf"), context="test.pdf", category="testing")
+                svc.ingest(Path("/fake/test.pdf"), category="testing")
 
         assert captured_points, "No points were ingested"
         ingested_payload = captured_points[0]["payload"]
@@ -344,8 +331,7 @@ class TestTrueIntegration:
         store._connect()
 
         svc = IngestionService(parser=PyMuPDFParser(), embedder=embedder, store=store)
-        total = svc.ingest(pdf_path, chunk_size=200, overlap=20,
-                           context="integration.pdf", category="test")
+        total = svc.ingest(pdf_path, chunk_size=200, overlap=20, category="test")
         assert total > 0
 
         query_vec = embedder.embed(["self-attention"])[0]
@@ -378,7 +364,7 @@ class TestTrueIntegration:
         mcp_context = AsyncMock()
 
         svc = IngestionService(PyMuPDFParser(), embedder, store)
-        svc.ingest(pdf_path, chunk_size=200, overlap=20, context="mcp_test.pdf", category="ml")
+        svc.ingest(pdf_path, chunk_size=200, overlap=20, category="ml")
 
         deps = _Deps(embedder=embedder, store=store)
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):

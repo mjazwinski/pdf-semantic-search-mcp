@@ -16,11 +16,11 @@ MCP client configuration (e.g. Claude Desktop / Cursor):
 
 Exposed tools
 -------------
-search_docs(text, context?, category?, max_results?)
+search_docs(text, category?, max_results?)
     Semantic search over ingested PDF chunks.
-    ``context`` and ``category`` are optional Qdrant payload filters.
+    ``category`` is optional Qdrant payload filters.
     Returns a JSON array of result objects:
-        [{score, text, source_file, page, chunk_index, context, category}, ...]
+        [{score, text, source_file, page, chunk_index, category}, ...]
 
 list_categories()
     Returns a JSON array of all distinct ``category`` strings stored in Qdrant.
@@ -66,7 +66,7 @@ mcp = MCPServer(
     instructions=(
         "Search ingested PDF documents by natural-language query. "
         "Use list_categories to discover filterable sections, then "
-        "search_docs with an optional category or context to narrow results."
+        "search_docs with an optional category to narrow results."
     ),
 )
 # ---------------------------------------------------------------------------
@@ -204,16 +204,13 @@ async def search_docs(
 
     Args:
         text:        Natural-language query string.
-        context:     Optional. Filter results to a specific document / source
-                     (matches the ``context`` payload field set during ingestion).
         category:    Optional. Filter results to a specific section or category
                      (matches the ``category`` payload field set during ingestion).
         max_results: Maximum number of chunks to return (1–100, default 5).
 
     Returns:
         JSON array of result objects ordered by descending relevance score.
-        Each object contains: score, text, source_file, page, chunk_index,
-        context, category.
+        Each object contains: score, text, source_file, page, chunk_index, category.
     """
     try:
         response = await _handle_search_docs({

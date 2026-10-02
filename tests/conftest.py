@@ -126,7 +126,6 @@ def make_search_result(
     source_file: str = "report.pdf",
     page: int = 0,
     chunk_index: int = 0,
-    context: str | None = "report.pdf",
     category: str | None = "intro",
 ) -> SearchResult:
     """Build a :class:`SearchResult` with sensible defaults."""
@@ -136,7 +135,6 @@ def make_search_result(
         source_file=source_file,
         page=page,
         chunk_index=chunk_index,
-        context=context,
         category=category,
         metadata={},
     )

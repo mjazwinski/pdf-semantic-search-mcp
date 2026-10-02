@@ -40,7 +40,6 @@ def _make_result(
     source_file: str = "report.pdf",
     page: int = 0,
     chunk_index: int = 0,
-    context: str | None = "report.pdf",
     category: str | None = "intro",
 ) -> SearchResult:
     return SearchResult(
@@ -49,7 +48,6 @@ def _make_result(
         source_file=source_file,
         page=page,
         chunk_index=chunk_index,
-        context=context,
         category=category,
         metadata={},
     )
@@ -95,7 +93,7 @@ def test_result_to_dict_score_rounded():
 
 
 def test_result_to_dict_none_fields_preserved():
-    r = _make_result(context=None, category=None)
+    r = _make_result(category=None)
     d = _result_to_dict(r)
     assert d["category"] is None
 

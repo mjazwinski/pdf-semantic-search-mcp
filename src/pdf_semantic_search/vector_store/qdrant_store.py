@@ -15,7 +15,7 @@ following keys.  All keys are indexed so they can be used as Qdrant filters:
 
 Filter behaviour in search()
 -----------------------------
-``context`` and ``category`` are forwarded as Qdrant ``must`` conditions so
+``category`` is forwarded as Qdrant ``must`` conditions so
 only points that match *all* supplied filters are returned.  Omitting a filter
 field (``None``) means "no restriction on this field".
 """
@@ -56,7 +56,6 @@ class SearchResult:
         source_file: Name / path of the source PDF.
         page:        0-based page index within the PDF.
         chunk_index: Position of this chunk within the page.
-        context:     Value of the ``context`` payload field (may be ``None``).
         category:    Value of the ``category`` payload field (may be ``None``).
         metadata:    Full Qdrant payload dict for any extra fields.
     """
@@ -66,7 +65,6 @@ class SearchResult:
     source_file: str
     page: int
     chunk_index: int
-    context: Optional[str]
     category: Optional[str]
     metadata: dict = field(default_factory=dict)
 
@@ -208,8 +206,6 @@ class QdrantStore:
         Args:
             query_vector: Embedding of the search query (same dim as stored vectors).
             top_r:        Maximum number of results to return.
-            context:      If set, restricts results to points whose payload
-                          ``context`` field exactly matches this value.
             category:     If set, restricts results to points whose payload
                           ``category`` field exactly matches this value.
 
@@ -221,7 +217,7 @@ class QdrantStore:
         query_filter = self._build_filter(category=category)
 
         logger.debug(
-            "Searching %r — top_r=%d, context=%r, category=%r",
+            "Searching %r — top_r=%d, category=%r",
             self.collection,
             top_r,
             category,

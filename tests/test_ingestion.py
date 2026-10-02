@@ -118,7 +118,7 @@ def test_ingest_single_batch_when_chunks_fit():
 def test_ingest_payload_contains_required_fields():
     chunks = _make_chunks(1)
     service, _, _, store = _make_service(chunks)
-    service.ingest(Path("doc.pdf"), context="my-doc", category="intro")
+    service.ingest(Path("doc.pdf"), category="intro")
 
     points = store.upsert.call_args.args[0]
     payload = points[0]["payload"]
@@ -130,11 +130,11 @@ def test_ingest_payload_contains_required_fields():
     assert payload["category"] == "intro"
 
 
-def test_ingest_payload_none_context_and_category_by_default():
+def test_ingest_payload_none_category_by_default():
     service, _, _, store = _make_service(_make_chunks(1))
     service.ingest(Path("doc.pdf"))
 
-    payload = store.upsert.call_args.args[0][0]["payload"]\
+    payload = store.upsert.call_args.args[0][0]["payload"]
     assert payload["category"] is None
 
 
@@ -248,7 +248,7 @@ def test_cli_passes_chunk_size_to_service(tmp_path):
     assert kwargs["overlap"] == 16
 
 
-def test_cli_passes_context_and_category(tmp_path):
+def test_cli_passes_category(tmp_path):
     pdf = tmp_path / "test.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
@@ -256,7 +256,7 @@ def test_cli_passes_context_and_category(tmp_path):
     with patches[0], patches[1], patches[2], patches[3] as mock_svc_cls:
         mock_svc = mock_svc_cls.return_value
         mock_svc.ingest.return_value = 1
-        runner.invoke(app, [str(pdf), "--context", "Annual Report", "--category", "finance"])
+        runner.invoke(app, [str(pdf), "--category", "finance"])
 
     kwargs = mock_svc.ingest.call_args.kwargs
     assert kwargs["category"] == "finance"

@@ -64,7 +64,6 @@ class IngestionService:
         chunk_size: int = 512,
         overlap: int = 64,
         batch_size: int = 64,
-        context: Optional[str] = None,
         category: Optional[str] = None,
     ) -> int:
         """Parse *pdf_path*, embed chunks in batches, and upsert to Qdrant.
@@ -76,9 +75,6 @@ class IngestionService:
             batch_size: Number of chunks to embed and upsert in one go.
                         Larger values improve throughput; smaller values
                         reduce peak memory usage.
-            context:    Optional label stored in every point's payload
-                        ``context`` field (e.g. the document name / title).
-                        Enables Qdrant filtering on this field at search time.
             category:   Optional label stored in every point's payload
                         ``category`` field (e.g. a document section or topic).
                         Enables Qdrant filtering on this field at search time.
