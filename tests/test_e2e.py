@@ -107,12 +107,6 @@ class TestParserToIngestion:
         pages = {p["payload"]["page"] for p in all_points}
         assert pages == {0, 1}
 
-    def test_context_and_category_stored_in_payload(self):
-        _, store, _ = self._run(["content"], context="annual-report", category="financials")
-        payload = store.upsert.call_args.args[0][0]["payload"]
-        assert payload["context"] == "annual-report"
-        assert payload["category"] == "financials"
-
     def test_deterministic_ids_on_reingest(self):
         fake_doc = _fake_fitz_doc(["some text content here"])
         embedder = make_mock_embedder(dim=4)
@@ -186,7 +180,6 @@ class TestIngestionToMCPSearch:
         assert item["text"] == "NLP chunk"
         assert item["page"] == 1
         assert "source_file" in item
-        assert "context" in item
         assert "category" in item
 
     def test_context_filter_propagates_to_store(self):
@@ -274,7 +267,6 @@ class TestFullStackPayloadConsistency:
             source_file=ingested_payload["source_file"],
             page=ingested_payload["page"],
             chunk_index=ingested_payload["chunk_index"],
-            context=ingested_payload["context"],
             category=ingested_payload["category"],
             metadata=ingested_payload,
         )
@@ -294,7 +286,6 @@ class TestFullStackPayloadConsistency:
         assert item["source_file"] == ingested_payload["source_file"]
         assert item["page"]        == ingested_payload["page"]
         assert item["chunk_index"] == ingested_payload["chunk_index"]
-        assert item["context"]     == ingested_payload["context"]
         assert item["category"]    == ingested_payload["category"]
         assert item["score"]       == 0.99
 

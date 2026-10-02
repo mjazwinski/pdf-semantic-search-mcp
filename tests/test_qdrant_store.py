@@ -97,7 +97,7 @@ def test_payload_indexes_created_for_new_collection():
         c.kwargs.get("field_name") or c.args[1]
         for c in mock_client.create_payload_index.call_args_list
     }
-    assert {"context", "category", "source_file"}.issubset(indexed_fields)
+    assert {"category", "source_file"}.issubset(indexed_fields)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +263,6 @@ def test_real_upsert_and_search():
             "source_file": "test.pdf",
             "page": 0,
             "chunk_index": 0,
-            "context": "test.pdf",
             "category": "testing",
         },
     }])

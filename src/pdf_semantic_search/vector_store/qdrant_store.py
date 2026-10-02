@@ -10,7 +10,6 @@ following keys.  All keys are indexed so they can be used as Qdrant filters:
         "source_file": str,   # originating PDF filename / path
         "page":        int,   # 0-based page index
         "chunk_index": int,   # position within that page's chunks
-        "context":     str?,  # optional — maps to DocumentEntry.context
         "category":    str?,  # optional — maps to DocumentEntry.category
     }
 
@@ -141,7 +140,7 @@ class QdrantStore:
         Called once after the collection is first created.  Qdrant requires
         explicit indexes for efficient payload filtering.
         """
-        for field_name in ("context", "category", "source_file"):
+        for field_name in ("category", "source_file"):
             self._client.create_payload_index(  # type: ignore[union-attr]
                 collection_name=self.collection,
                 field_name=field_name,
@@ -160,7 +159,7 @@ class QdrantStore:
 
         - ``"vector"`` — ``list[float]`` of length :attr:`dim`.
         - ``"payload"`` — ``dict`` with at minimum ``"text"`` and
-          ``"source_file"`` keys.  ``"context"`` and ``"category"`` are
+          ``"source_file"`` keys.  ``"category"`` is
           optional but enable filtering.
         - ``"id"`` — *optional* ``int`` or ``str`` UUID.  A random UUID is
           generated if omitted.
@@ -304,7 +303,6 @@ class QdrantStore:
             source_file=payload.get("source_file", ""),
             page=payload.get("page", 0),
             chunk_index=payload.get("chunk_index", 0),
-            context=payload.get("context"),
             category=payload.get("category"),
             metadata=payload,
         )

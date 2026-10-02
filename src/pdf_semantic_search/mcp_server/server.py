@@ -260,7 +260,6 @@ def _result_to_dict(result: SearchResult) -> dict:
         "source_file": result.source_file,
         "page":        result.page,
         "chunk_index": result.chunk_index,
-        "context":     result.context,
         "category":    result.category,
     }
 

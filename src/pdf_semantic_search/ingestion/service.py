@@ -16,7 +16,6 @@ plus the two optional filter fields from
         "source_file": str,   # PDF filename
         "page":        int,   # 0-based page index
         "chunk_index": int,   # position within page
-        "context":     str?,  # optional — used for Qdrant filtering
         "category":    str?,  # optional — used for Qdrant filtering
     }
 """
@@ -124,7 +123,6 @@ class IngestionService:
                         "source_file": chunk.source_file,
                         "page": chunk.page,
                         "chunk_index": chunk.chunk_index,
-                        "context": context,
                         "category": category,
                     },
                 }

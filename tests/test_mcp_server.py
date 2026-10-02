@@ -86,7 +86,7 @@ def reset_singleton():
 def test_result_to_dict_contains_all_fields():
     r = _make_result()
     d = _result_to_dict(r)
-    assert set(d.keys()) == {"score", "text", "source_file", "page", "chunk_index", "context", "category"}
+    assert set(d.keys()) == {"score", "text", "source_file", "page", "chunk_index", "category"}
 
 
 def test_result_to_dict_score_rounded():
@@ -97,7 +97,6 @@ def test_result_to_dict_score_rounded():
 def test_result_to_dict_none_fields_preserved():
     r = _make_result(context=None, category=None)
     d = _result_to_dict(r)
-    assert d["context"] is None
     assert d["category"] is None
 
 

@@ -127,7 +127,6 @@ def test_ingest_payload_contains_required_fields():
     assert payload["source_file"] == "doc.pdf"
     assert payload["page"] == 0
     assert payload["chunk_index"] == 0
-    assert payload["context"] == "my-doc"
     assert payload["category"] == "intro"
 
 
@@ -135,8 +134,7 @@ def test_ingest_payload_none_context_and_category_by_default():
     service, _, _, store = _make_service(_make_chunks(1))
     service.ingest(Path("doc.pdf"))
 
-    payload = store.upsert.call_args.args[0][0]["payload"]
-    assert payload["context"] is None
+    payload = store.upsert.call_args.args[0][0]["payload"]\
     assert payload["category"] is None
 
 
@@ -261,19 +259,5 @@ def test_cli_passes_context_and_category(tmp_path):
         runner.invoke(app, [str(pdf), "--context", "Annual Report", "--category", "finance"])
 
     kwargs = mock_svc.ingest.call_args.kwargs
-    assert kwargs["context"] == "Annual Report"
     assert kwargs["category"] == "finance"
 
-
-def test_cli_defaults_context_to_filename(tmp_path):
-    pdf = tmp_path / "my_report.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-
-    patches = _mock_dependencies(_make_chunks(1))
-    with patches[0], patches[1], patches[2], patches[3] as mock_svc_cls:
-        mock_svc = mock_svc_cls.return_value
-        mock_svc.ingest.return_value = 1
-        runner.invoke(app, [str(pdf)])
-
-    kwargs = mock_svc.ingest.call_args.kwargs
-    assert kwargs["context"] == "my_report.pdf"
