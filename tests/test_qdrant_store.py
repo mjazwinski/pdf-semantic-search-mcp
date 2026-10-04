@@ -7,10 +7,11 @@ container — start one with ``docker compose up -d`` before running them.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pdf_semantic_search.models import SparseEmbedding
 from pdf_semantic_search.vector_store.qdrant_store import QdrantStore, SearchResult
 
 # ---------------------------------------------------------------------------
@@ -24,15 +25,18 @@ def _make_store() -> QdrantStore:
     return QdrantStore(host="localhost", port=6333, collection="test_col", dim=DIM)
 
 
-def _fake_vector() -> list[float]:
+def _fake_dense() -> list[float]:
     return [0.1, 0.2, 0.3, 0.4]
+
+
+def _fake_sparse() -> SparseEmbedding:
+    return SparseEmbedding(indices=[5, 42], values=[0.8, 0.3])
 
 
 def _make_mock_client(collection_exists: bool = False) -> MagicMock:
     """Build a MagicMock that looks like a QdrantClient."""
     client = MagicMock()
 
-    # get_collections() response
     if collection_exists:
         col = MagicMock()
         col.name = "test_col"
@@ -40,7 +44,6 @@ def _make_mock_client(collection_exists: bool = False) -> MagicMock:
     else:
         client.get_collections.return_value.collections = []
 
-    # scroll() — return one page then stop
     client.scroll.return_value = ([], None)
 
     return client
@@ -63,6 +66,30 @@ def test_connect_creates_collection_when_missing():
     assert kwargs.get("collection_name") == "test_col" or args[0] == "test_col"
 
 
+def test_connect_creates_collection_with_named_dense_vector():
+    store = _make_store()
+    mock_client = _make_mock_client(collection_exists=False)
+
+    with patch("pdf_semantic_search.vector_store.qdrant_store.QdrantClient", return_value=mock_client):
+        store._connect()
+
+    _, kwargs = mock_client.create_collection.call_args
+    vectors_config = kwargs.get("vectors_config", {})
+    assert "dense" in vectors_config, "Collection must declare a 'dense' named vector"
+
+
+def test_connect_creates_collection_with_sparse_vector():
+    store = _make_store()
+    mock_client = _make_mock_client(collection_exists=False)
+
+    with patch("pdf_semantic_search.vector_store.qdrant_store.QdrantClient", return_value=mock_client):
+        store._connect()
+
+    _, kwargs = mock_client.create_collection.call_args
+    sparse_config = kwargs.get("sparse_vectors_config", {})
+    assert "sparse" in sparse_config, "Collection must declare a 'sparse' named vector"
+
+
 def test_connect_skips_creation_when_collection_exists():
     store = _make_store()
     mock_client = _make_mock_client(collection_exists=True)
@@ -80,9 +107,8 @@ def test_connect_is_idempotent():
 
     with patch("pdf_semantic_search.vector_store.qdrant_store.QdrantClient", return_value=mock_client):
         store._connect()
-        store._connect()  # second call — should be a no-op
+        store._connect()
 
-    # QdrantClient constructor called exactly once
     assert mock_client.get_collections.call_count == 1
 
 
@@ -112,23 +138,52 @@ def _make_connected_store() -> tuple[QdrantStore, MagicMock]:
     return store, mock_client
 
 
+def _point(dense=None, sparse=None, **payload_extra) -> dict:
+    """Build a minimal valid point dict for upsert."""
+    base_payload = {"text": "hello", "source_file": "a.pdf"}
+    base_payload.update(payload_extra)
+    return {
+        "dense_vector": dense or _fake_dense(),
+        "sparse_vector": sparse or _fake_sparse(),
+        "payload": base_payload,
+    }
+
+
 def test_upsert_calls_qdrant_upsert():
     store, mock_client = _make_connected_store()
-    points = [{"vector": _fake_vector(), "payload": {"text": "hello", "source_file": "a.pdf"}}]
-    store.upsert(points)
+    store.upsert([_point()])
     mock_client.upsert.assert_called_once()
 
 
 def test_upsert_passes_wait_true():
     store, mock_client = _make_connected_store()
-    store.upsert([{"vector": _fake_vector(), "payload": {"text": "x", "source_file": "a.pdf"}}])
+    store.upsert([_point()])
     _, kwargs = mock_client.upsert.call_args
     assert kwargs.get("wait") is True
 
 
+def test_upsert_point_has_both_named_vectors():
+    store, mock_client = _make_connected_store()
+    store.upsert([_point()])
+    _, kwargs = mock_client.upsert.call_args
+    pt = kwargs["points"][0]
+    # PointStruct.vector should be a dict keyed by name
+    assert isinstance(pt.vector, dict)
+    assert "dense" in pt.vector
+    assert "sparse" in pt.vector
+
+
+def test_upsert_dense_vector_values_match():
+    store, mock_client = _make_connected_store()
+    dense = [0.1, 0.2, 0.3, 0.4]
+    store.upsert([_point(dense=dense)])
+    _, kwargs = mock_client.upsert.call_args
+    assert kwargs["points"][0].vector["dense"] == dense
+
+
 def test_upsert_auto_generates_id_when_missing():
     store, mock_client = _make_connected_store()
-    store.upsert([{"vector": _fake_vector(), "payload": {"text": "x", "source_file": "a.pdf"}}])
+    store.upsert([_point()])
     _, kwargs = mock_client.upsert.call_args
     point = kwargs["points"][0]
     assert point.id is not None
@@ -137,7 +192,7 @@ def test_upsert_auto_generates_id_when_missing():
 def test_upsert_uses_provided_id():
     store, mock_client = _make_connected_store()
     custom_id = str(uuid.uuid4())
-    store.upsert([{"id": custom_id, "vector": _fake_vector(), "payload": {"text": "x", "source_file": "a.pdf"}}])
+    store.upsert([{"id": custom_id, **_point()}])
     _, kwargs = mock_client.upsert.call_args
     assert kwargs["points"][0].id == custom_id
 
@@ -149,7 +204,7 @@ def test_upsert_raises_on_empty_list():
 
 
 # ---------------------------------------------------------------------------
-# search
+# search (hybrid RRF)
 # ---------------------------------------------------------------------------
 
 
@@ -174,7 +229,7 @@ def test_search_returns_search_results():
         _make_scored_point(0.7, {"text": "chunk2", "source_file": "a.pdf", "page": 1, "chunk_index": 0}),
     ])
 
-    results = store.search(_fake_vector(), top_r=2)
+    results = store.search(_fake_dense(), _fake_sparse(), top_r=2)
 
     assert len(results) == 2
     assert all(isinstance(r, SearchResult) for r in results)
@@ -182,48 +237,106 @@ def test_search_returns_search_results():
     assert results[0].text == "chunk1"
 
 
+def test_search_uses_prefetch_fusion():
+    """search() must issue two Prefetch legs and a FusionQuery (RRF)."""
+    from qdrant_client.models import FusionQuery, Prefetch
+
+    store, mock_client = _make_connected_store()
+    mock_client.query_points.return_value = _make_query_response([])
+
+    store.search(_fake_dense(), _fake_sparse(), top_r=5)
+
+    _, kwargs = mock_client.query_points.call_args
+    prefetch = kwargs.get("prefetch", [])
+    assert len(prefetch) == 2, "Expected exactly two Prefetch legs (dense + sparse)"
+    assert isinstance(prefetch[0], Prefetch)
+    assert isinstance(prefetch[1], Prefetch)
+    assert isinstance(kwargs.get("query"), FusionQuery)
+
+
+def test_search_dense_prefetch_uses_dense_name():
+    store, mock_client = _make_connected_store()
+    mock_client.query_points.return_value = _make_query_response([])
+
+    store.search(_fake_dense(), _fake_sparse(), top_r=5)
+
+    _, kwargs = mock_client.query_points.call_args
+    dense_leg = kwargs["prefetch"][0]
+    assert dense_leg.using == "dense"
+
+
+def test_search_sparse_prefetch_uses_sparse_name():
+    store, mock_client = _make_connected_store()
+    mock_client.query_points.return_value = _make_query_response([])
+
+    store.search(_fake_dense(), _fake_sparse(), top_r=5)
+
+    _, kwargs = mock_client.query_points.call_args
+    sparse_leg = kwargs["prefetch"][1]
+    assert sparse_leg.using == "sparse"
+
+
 def test_search_no_filter_passes_none_to_qdrant():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_r=5, category=None, version=None)
+    store.search(_fake_dense(), _fake_sparse(), top_r=5, category=None, version=None)
 
     _, kwargs = mock_client.query_points.call_args
-    assert kwargs["query_filter"] is None
+    # Both prefetch legs and the top-level call should carry no filter
+    for leg in kwargs.get("prefetch", []):
+        assert leg.filter is None
 
 
 def test_search_category_filter_applied():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_r=5, category="introduction")
+    store.search(_fake_dense(), _fake_sparse(), top_r=5, category="introduction")
 
     _, kwargs = mock_client.query_points.call_args
-    flt = kwargs["query_filter"]
-    assert any(c.key == "category" for c in flt.must)
+    for leg in kwargs["prefetch"]:
+        flt = leg.filter
+        assert flt is not None
+        assert any(c.key == "category" for c in flt.must)
 
 
 def test_search_version_filter_applied():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_r=5, version="v2")
+    store.search(_fake_dense(), _fake_sparse(), top_r=5, version="v2")
 
     _, kwargs = mock_client.query_points.call_args
-    flt = kwargs["query_filter"]
-    assert flt is not None
-    assert any(c.key == "version" for c in flt.must)
+    for leg in kwargs["prefetch"]:
+        flt = leg.filter
+        assert flt is not None
+        assert any(c.key == "version" for c in flt.must)
 
 
 def test_search_category_and_version_combined():
     store, mock_client = _make_connected_store()
     mock_client.query_points.return_value = _make_query_response([])
 
-    store.search(_fake_vector(), top_r=3, category="intro", version="v2")
+    store.search(_fake_dense(), _fake_sparse(), top_r=3, category="intro", version="v2")
 
     _, kwargs = mock_client.query_points.call_args
-    keys = {c.key for c in kwargs["query_filter"].must}
-    assert keys == {"category", "version"}
+    for leg in kwargs["prefetch"]:
+        keys = {c.key for c in leg.filter.must}
+        assert keys == {"category", "version"}
+
+
+def test_search_prefetch_limit_is_larger_than_top_r():
+    """Prefetch legs must request more candidates than the final top_r."""
+    store, mock_client = _make_connected_store()
+    mock_client.query_points.return_value = _make_query_response([])
+
+    top_r = 5
+    store.search(_fake_dense(), _fake_sparse(), top_r=top_r)
+
+    _, kwargs = mock_client.query_points.call_args
+    for leg in kwargs["prefetch"]:
+        assert leg.limit > top_r
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +352,6 @@ def test_list_categories_deduplicates_and_sorts():
         MagicMock(payload={"category": "methods"}),
         MagicMock(payload={"category": "intro"}),   # duplicate
     ]
-    # First scroll call returns page1 with offset; second terminates the loop
     mock_client.scroll.side_effect = [
         (page1, "cursor-abc"),
         ([], None),
@@ -273,14 +385,17 @@ def test_list_categories_excludes_none_and_empty():
 def test_real_upsert_and_search():
     import random
 
+    sparse = SparseEmbedding(indices=[1, 10, 100], values=[0.9, 0.5, 0.3])
+
     store = QdrantStore(
         host="localhost", port=6333, collection="pytest_integration", dim=DIM
     )
     store._connect()
 
-    vector = [random.random() for _ in range(DIM)]
+    dense = [random.random() for _ in range(DIM)]
     store.upsert([{
-        "vector": vector,
+        "dense_vector": dense,
+        "sparse_vector": sparse,
         "payload": {
             "text": "integration test chunk",
             "source_file": "test.pdf",
@@ -290,10 +405,9 @@ def test_real_upsert_and_search():
         },
     }])
 
-    results = store.search(vector, top_r=1)
+    results = store.search(dense, sparse, top_r=1)
     assert len(results) == 1
     assert results[0].text == "integration test chunk"
-    assert results[0].score > 0.99  # same vector → near-perfect match
 
     # Cleanup
     store._client.delete_collection("pytest_integration")

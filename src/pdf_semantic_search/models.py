@@ -20,9 +20,35 @@ Design notes
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Generic, Optional, TypeVar
 
 from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Sparse vector representation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SparseEmbedding:
+    """Sparse vector representation produced by SPLADE-style models.
+
+    Stores only the non-zero entries of a high-dimensional term-weight vector
+    (vocabulary size is typically 30 000+).  Most entries are zero, so storing
+    only the non-zero ``(index, value)`` pairs is far more memory-efficient
+    than a dense representation.
+
+    Attributes:
+        indices: Vocabulary token indices with non-zero weight (sorted ascending
+                 by the embedding model).
+        values:  Corresponding positive weights for each index.  Higher values
+                 indicate stronger term relevance.
+    """
+
+    indices: list[int]
+    values: list[float]
 
 
 # ---------------------------------------------------------------------------

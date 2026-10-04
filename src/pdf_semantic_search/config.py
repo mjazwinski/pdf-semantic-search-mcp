@@ -15,9 +15,17 @@ class Settings(BaseSettings):
     qdrant_grpc_port: int = 6334
     qdrant_collection: str = "pdf_chunks"
 
-    # ── Embeddings ────────────────────────────────────────────────────────────
+    # ── Dense embeddings ──────────────────────────────────────────────────────
     embedding_model: str = "all-MiniLM-L6-v2"
     embedding_dim: int = 384
+    # Name of the dense vector field inside the Qdrant collection.
+    dense_vector_name: str = "dense"
+
+    # ── Sparse embeddings (SPLADE++ via fastembed, runs locally) ──────────────
+    # Model is downloaded once on first use and cached locally.
+    sparse_embedding_model: str = "prithivida/Splade_PP_en_v1"
+    # Name of the sparse vector field inside the Qdrant collection.
+    sparse_vector_name: str = "sparse"
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
     default_chunk_size: int = 512

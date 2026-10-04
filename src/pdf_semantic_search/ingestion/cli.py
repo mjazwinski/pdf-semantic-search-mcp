@@ -31,6 +31,7 @@ from rich.progress import (
 
 from pdf_semantic_search.config import settings
 from pdf_semantic_search.embeddings.sentence_transformer import SentenceTransformerEmbedder
+from pdf_semantic_search.embeddings.sparse_embedder import FastEmbedSparseEmbedder
 from pdf_semantic_search.ingestion.service import IngestionService
 from pdf_semantic_search.pdf.parser import PyMuPDFParser
 from pdf_semantic_search.vector_store.qdrant_store import QdrantStore
@@ -112,7 +113,10 @@ def ingest(
         f"collection=[cyan]{settings.qdrant_collection}[/cyan]"
     )
     console.print(
-        f"  [bold]Model:[/bold]      [cyan]{settings.embedding_model}[/cyan]"
+        f"  [bold]Dense model:[/bold]  [cyan]{settings.embedding_model}[/cyan]"
+    )
+    console.print(
+        f"  [bold]Sparse model:[/bold] [cyan]{settings.sparse_embedding_model}[/cyan]"
     )
     console.print()
 
@@ -127,8 +131,8 @@ def ingest(
         transient=True,
     ) as progress:
 
-        # 1. Load model
-        task_model = progress.add_task("Loading embedding model …", total=1)
+        # 1. Load dense model
+        task_model = progress.add_task("Loading dense embedding model …", total=1)
         try:
             embedder = SentenceTransformerEmbedder(
                 model_name=settings.embedding_model,
@@ -136,11 +140,24 @@ def ingest(
             )
             _ = embedder.dim  # trigger lazy load now so progress bar is accurate
         except Exception as exc:
-            console.print(f"[red]✗ Failed to load embedding model:[/red] {exc}")
+            console.print(f"[red]✗ Failed to load dense embedding model:[/red] {exc}")
             raise typer.Exit(code=1)
-        progress.update(task_model, advance=1, description="Embedding model loaded ✓")
+        progress.update(task_model, advance=1, description="Dense model loaded ✓")
 
-        # 2. Connect to Qdrant
+        # 2. Load sparse model (SPLADE++)
+        task_sparse = progress.add_task("Loading sparse embedding model …", total=1)
+        try:
+            sparse_embedder = FastEmbedSparseEmbedder(
+                model_name=settings.sparse_embedding_model,
+            )
+            # Trigger lazy model load so the progress bar is accurate
+            sparse_embedder.embed_sparse(["warmup"])
+        except Exception as exc:
+            console.print(f"[red]✗ Failed to load sparse embedding model:[/red] {exc}")
+            raise typer.Exit(code=1)
+        progress.update(task_sparse, advance=1, description="Sparse model loaded ✓")
+
+        # 3. Connect to Qdrant
         task_qdrant = progress.add_task("Connecting to Qdrant …", total=1)
         try:
             store = QdrantStore(
@@ -148,6 +165,8 @@ def ingest(
                 port=settings.qdrant_port,
                 collection=settings.qdrant_collection,
                 dim=embedder.dim,
+                dense_vector_name=settings.dense_vector_name,
+                sparse_vector_name=settings.sparse_vector_name,
             )
             store._connect()
         except Exception as exc:
@@ -159,13 +178,14 @@ def ingest(
             raise typer.Exit(code=1)
         progress.update(task_qdrant, advance=1, description="Qdrant connected ✓")
 
-        # 3. Parse + embed + upsert
+        # 4. Parse + embed (dense + sparse) + upsert
         task_ingest = progress.add_task("Ingesting …", total=None)  # indeterminate until parsed
         t0 = time.perf_counter()
         try:
             service = IngestionService(
                 parser=PyMuPDFParser(),
                 embedder=embedder,
+                sparse_embedder=sparse_embedder,
                 store=store,
             )
             total = service.ingest(

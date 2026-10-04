@@ -1,7 +1,7 @@
-"""Ingestion service — orchestrates parse → embed → upsert.
+"""Ingestion service — orchestrates parse → embed (dense + sparse) → upsert.
 
 The service is the single place that knows about all three sub-systems
-(parser, embedder, vector store) and wires them together.  Each sub-system
+(parser, embedders, vector store) and wires them together.  Each sub-system
 is injected at construction time, making the class fully testable without
 a live Qdrant instance or a GPU.
 
@@ -19,6 +19,15 @@ plus the two optional filter fields from
         "category":    str?,  # optional — used for Qdrant filtering
         "version":     str?,  # optional — used for Qdrant filtering
     }
+
+Vector layout per point
+-----------------------
+Each point contains **two** named vectors:
+
+* ``dense_vector`` — L2-normalised dense embedding (SentenceTransformer).
+* ``sparse_vector`` — SPLADE++ sparse embedding (:class:`SparseEmbedding`).
+
+Both are computed in the same batch loop for efficiency.
 """
 from __future__ import annotations
 
@@ -29,6 +38,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from pdf_semantic_search.embeddings.sentence_transformer import EmbeddingModel
+from pdf_semantic_search.embeddings.sparse_embedder import SparseEmbeddingModel
 from pdf_semantic_search.pdf.parser import PDFParserBase, TextChunk
 from pdf_semantic_search.vector_store.qdrant_store import QdrantStore
 
@@ -36,23 +46,28 @@ logger = logging.getLogger(__name__)
 
 
 class IngestionService:
-    """Ties together a parser, an embedding model, and a vector store.
+    """Ties together a parser, a dense embedder, a sparse embedder, and a store.
 
     Args:
-        parser:   Any :class:`~pdf_semantic_search.pdf.parser.PDFParserBase` implementation.
-        embedder: Any :class:`~pdf_semantic_search.embeddings.sentence_transformer.EmbeddingModel`
-                  implementation.
-        store:    A :class:`~pdf_semantic_search.vector_store.qdrant_store.QdrantStore` instance.
+        parser:          Any :class:`~pdf_semantic_search.pdf.parser.PDFParserBase`
+                         implementation.
+        embedder:        Dense :class:`~pdf_semantic_search.embeddings.sentence_transformer.EmbeddingModel`
+                         implementation.
+        sparse_embedder: Sparse :class:`~pdf_semantic_search.embeddings.sparse_embedder.SparseEmbeddingModel`
+                         implementation (SPLADE-style).
+        store:           A :class:`~pdf_semantic_search.vector_store.qdrant_store.QdrantStore` instance.
     """
 
     def __init__(
         self,
         parser: PDFParserBase,
         embedder: EmbeddingModel,
+        sparse_embedder: SparseEmbeddingModel,
         store: QdrantStore,
     ) -> None:
         self.parser = parser
         self.embedder = embedder
+        self.sparse_embedder = sparse_embedder
         self.store = store
 
     # ------------------------------------------------------------------
@@ -68,7 +83,7 @@ class IngestionService:
         category: Optional[str] = None,
         version: Optional[str] = None,
     ) -> int:
-        """Parse *pdf_path*, embed chunks in batches, and upsert to Qdrant.
+        """Parse *pdf_path*, embed chunks (dense + sparse) in batches, and upsert.
 
         Args:
             pdf_path:   Path to the PDF file to ingest.
@@ -78,11 +93,9 @@ class IngestionService:
                         Larger values improve throughput; smaller values
                         reduce peak memory usage.
             category:   Optional label stored in every point's payload
-                        ``category`` field (e.g. a document section or topic).
-                        Enables Qdrant filtering on this field at search time.
+                        ``category`` field.  Enables Qdrant filtering.
             version:    Optional version string stored in every point's payload
-                        ``version`` field (e.g. ``"v2"`` or ``"2024-Q1"``).
-                        Enables Qdrant filtering on this field at search time.
+                        ``version`` field.  Enables Qdrant filtering.
 
         Returns:
             Total number of chunks ingested (upserted to Qdrant).
@@ -109,16 +122,22 @@ class IngestionService:
             logger.warning("No chunks produced for %r — nothing ingested.", str(pdf_path))
             return 0
 
-        # ── 2. Embed + upsert in batches ─────────────────────────────────────
+        # ── 2. Embed (dense + sparse) + upsert in batches ─────────────────────
         total = 0
-        for batch in self._batched(chunks, batch_size): # the generartor should be build in in the parser if it makes sense at all. here the document is already in memory
+        for batch in self._batched(chunks, batch_size):
             texts = [c.text for c in batch]
-            vectors = self.embedder.embed(texts)
+
+            # Dense embeddings from SentenceTransformer
+            dense_vectors = self.embedder.embed(texts)
+
+            # Sparse embeddings from SPLADE++ (fastembed)
+            sparse_vectors = self.sparse_embedder.embed_sparse(texts)
 
             points = [
                 {
                     "id": self._deterministic_id(chunk),
-                    "vector": vector,
+                    "dense_vector": dense_vec,
+                    "sparse_vector": sparse_vec,
                     "payload": {
                         "text": chunk.text,
                         "source_file": chunk.source_file,
@@ -128,7 +147,7 @@ class IngestionService:
                         "version": version,
                     },
                 }
-                for chunk, vector in zip(batch, vectors)
+                for chunk, dense_vec, sparse_vec in zip(batch, dense_vectors, sparse_vectors)
             ]
 
             self.store.upsert(points)

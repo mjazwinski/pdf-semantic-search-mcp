@@ -11,8 +11,10 @@ requires-python = ">=3.11"
 dependencies = [
     # PDF parsing
     "pymupdf>=1.24.0",
-    # Embeddings
+    # Dense embeddings (local, SentenceTransformer-compatible models)
     "sentence-transformers>=3.0.0",
+    # Sparse embeddings (local SPLADE++ via ONNX — no GPU / API key required)
+    "fastembed>=0.4.0",
     # Vector store
     "qdrant-client>=1.9.0",
     # MCP server (stdio)

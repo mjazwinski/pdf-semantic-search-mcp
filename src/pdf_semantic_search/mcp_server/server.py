@@ -52,6 +52,7 @@ from mcp.types import TextContent
 
 from pdf_semantic_search.config import settings
 from pdf_semantic_search.embeddings.sentence_transformer import SentenceTransformerEmbedder
+from pdf_semantic_search.embeddings.sparse_embedder import FastEmbedSparseEmbedder
 from pdf_semantic_search.models import DocumentEntry, DocumentQuery
 from pdf_semantic_search.vector_store.qdrant_store import QdrantStore, SearchResult
 
@@ -77,6 +78,7 @@ mcp = MCPServer(
 @dataclass
 class _Deps:
     embedder: SentenceTransformerEmbedder
+    sparse_embedder: FastEmbedSparseEmbedder
     store: QdrantStore
 
 
@@ -84,7 +86,7 @@ _deps: Optional[_Deps] = None  # module-level singleton
 
 
 def _get_deps() -> _Deps:
-    """Return the shared embedder + store, initialising them on first call."""
+    """Return the shared embedder + sparse embedder + store, initialising on first call."""
     global _deps
     if _deps is None:
         logger.info("Initialising MCP server dependencies …")
@@ -94,21 +96,34 @@ def _get_deps() -> _Deps:
             device=None,    # auto-detect CPU / CUDA / MPS
             normalize=True,
         )
-        _ = embedder.dim  # trigger model load now; first search won't be slow
+        _ = embedder.dim  # trigger dense model load now
+
+        sparse_embedder = FastEmbedSparseEmbedder(
+            model_name=settings.sparse_embedding_model,
+        )
+        # Warm up the sparse model so first search is not slow
+        sparse_embedder.embed_sparse(["warmup"])
 
         store = QdrantStore(
             host=settings.qdrant_host,
             port=settings.qdrant_port,
             collection=settings.qdrant_collection,
             dim=embedder.dim,
+            dense_vector_name=settings.dense_vector_name,
+            sparse_vector_name=settings.sparse_vector_name,
         )
         store._connect()
 
-        _deps = _Deps(embedder=embedder, store=store)
+        _deps = _Deps(
+            embedder=embedder,
+            sparse_embedder=sparse_embedder,
+            store=store,
+        )
         logger.info(
-            "Dependencies ready (model=%r, dim=%d).",
+            "Dependencies ready (dense=%r dim=%d, sparse=%r).",
             settings.embedding_model,
             embedder.dim,
+            settings.sparse_embedding_model,
         )
 
     return _deps
@@ -154,11 +169,13 @@ async def _handle_search_docs(arguments: dict,
     )
     await mcpContext.report_progress(20, 100, "Getting deps")
     deps = _get_deps()
-    await mcpContext.report_progress(30, 100, "Got deps")
-    query_vector = deps.embedder.embed([query_text])[0]
-    await mcpContext.report_progress(40, 100, "Executing query")
+    await mcpContext.report_progress(30, 100, "Got deps — embedding query")
+    query_dense = deps.embedder.embed([query_text])[0]
+    query_sparse = deps.sparse_embedder.embed_sparse([query_text])[0]
+    await mcpContext.report_progress(40, 100, "Executing hybrid query (dense + sparse RRF)")
     results: list[SearchResult] = deps.store.search(
-        query_vector=query_vector,
+        query_dense=query_dense,
+        query_sparse=query_sparse,
         top_r=top_r,
         category=category,
         version=version,

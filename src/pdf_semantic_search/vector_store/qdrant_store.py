@@ -1,4 +1,4 @@
-"""Qdrant vector store — collection management, upsert, and filtered search.
+"""Qdrant vector store — collection management, upsert, and hybrid search.
 
 Payload schema stored alongside every vector
 --------------------------------------------
@@ -14,11 +14,36 @@ following keys.  All keys are indexed so they can be used as Qdrant filters:
         "version":     str?,  # optional — maps to DocumentEntry.version
     }
 
-Filter behaviour in search()
------------------------------
+Vector layout
+-------------
+Each point stores **two named vectors**:
+
+* ``"dense"`` (configurable via :attr:`QdrantStore.dense_vector_name`):
+  A dense L2-normalised embedding from a SentenceTransformer model.
+  Used for semantic / conceptual similarity (cosine distance).
+
+* ``"sparse"`` (configurable via :attr:`QdrantStore.sparse_vector_name`):
+  A SPLADE++ sparse vector over the model vocabulary.
+  Used for exact / near-exact term matching.
+
+Hybrid search with RRF
+-----------------------
+:meth:`search` issues two ``Prefetch`` sub-queries (one dense ANN, one sparse)
+and fuses them with **Reciprocal Rank Fusion** (``Fusion.RRF``) so that
+documents ranking highly in *either* modality surface at the top.
+
+Filter behaviour
+----------------
 ``category`` and ``version`` are forwarded as Qdrant ``must`` conditions so
-only points that match *all* supplied filters are returned.  Omitting a filter
-field (``None``) means "no restriction on this field".
+only points that match *all* supplied filters are returned.  Both Prefetch
+legs apply the same filter before RRF merging.
+
+.. note::
+    If you have an existing collection that was created with the old
+    single (unnamed) dense vector format, you must delete and recreate it
+    before this code can ingest or search it.  Run::
+
+        docker compose down -v && docker compose up -d
 """
 from __future__ import annotations
 
@@ -29,15 +54,22 @@ from typing import Optional
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
+    Condition,
     Distance,
     FieldCondition,
-    Condition,
     Filter,
+    Fusion,
+    FusionQuery,
     MatchValue,
     PayloadSchemaType,
     PointStruct,
+    Prefetch,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
+
+from pdf_semantic_search.models import SparseEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +81,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SearchResult:
-    """A single chunk returned from a semantic search.
+    """A single chunk returned from a hybrid (dense + sparse + RRF) search.
 
     Attributes:
-        score:       Cosine similarity score in [0, 1] (higher = more relevant).
+        score:       RRF fusion score (higher = ranked better across both
+                     the dense and sparse retrieval legs).
         text:        The raw chunk text stored in Qdrant.
         source_file: Name / path of the source PDF.
         page:        0-based page index within the PDF.
         chunk_index: Position of this chunk within the page.
         category:    Value of the ``category`` payload field (may be ``None``).
+        version:     Value of the ``version`` payload field (may be ``None``).
         metadata:    Full Qdrant payload dict for any extra fields.
     """
 
@@ -79,28 +113,46 @@ class SearchResult:
 class QdrantStore:
     """Thin, opinionated wrapper around the Qdrant Python client.
 
-    Responsibilities:
-    - Create the named collection (with cosine distance) on first connect if
-      it does not already exist.
-    - Upsert batches of vector points with structured payloads.
-    - Run filtered semantic searches and return typed :class:`SearchResult` objects.
+    Responsibilities
+    ----------------
+    * Create the named collection (dense + sparse named vectors) on first
+      connect if it does not already exist.
+    * Upsert batches of vector points that carry **both** a dense and a sparse
+      vector per chunk.
+    * Run hybrid searches (dense ANN + sparse term matching) fused with
+      Reciprocal Rank Fusion and return typed :class:`SearchResult` objects.
 
-    The client is created lazily — no network call happens until
+    The Qdrant client is created lazily — no network call happens until
     :meth:`_connect` is invoked (which is called by :meth:`upsert` and
     :meth:`search` on first use).
 
     Args:
-        host:       Qdrant hostname (e.g. ``"localhost"``).
-        port:       Qdrant HTTP port (default ``6333``).
-        collection: Name of the Qdrant collection to use.
-        dim:        Vector dimension — **must** match the embedding model output.
+        host:               Qdrant hostname (e.g. ``"localhost"``).
+        port:               Qdrant HTTP port (default ``6333``).
+        collection:         Name of the Qdrant collection to use.
+        dim:                Dense vector dimension — **must** match the dense
+                            embedding model output.
+        dense_vector_name:  Name of the dense named-vector field in Qdrant.
+                            Defaults to ``"dense"``.
+        sparse_vector_name: Name of the sparse named-vector field in Qdrant.
+                            Defaults to ``"sparse"``.
     """
 
-    def __init__(self, host: str, port: int, collection: str, dim: int) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        collection: str,
+        dim: int,
+        dense_vector_name: str = "dense",
+        sparse_vector_name: str = "sparse",
+    ) -> None:
         self.host = host
         self.port = port
         self.collection = collection
         self.dim = dim
+        self.dense_vector_name = dense_vector_name
+        self.sparse_vector_name = sparse_vector_name
         self._client = None  # qdrant_client.QdrantClient — set in _connect()
 
     # ------------------------------------------------------------------
@@ -110,7 +162,9 @@ class QdrantStore:
     def _connect(self) -> None:
         """Initialise the Qdrant client and ensure the collection exists.
 
-        Safe to call multiple times — subsequent calls are no-ops.
+        Creates the collection with both a dense (cosine) and a sparse named
+        vector if it does not yet exist.  Safe to call multiple times —
+        subsequent calls are no-ops once the client is set.
         """
         if self._client is not None:
             return  # already connected
@@ -121,15 +175,26 @@ class QdrantStore:
         existing = [c.name for c in self._client.get_collections().collections]
         if self.collection not in existing:
             logger.info(
-                "Collection %r not found — creating with dim=%d, distance=Cosine.",
+                "Collection %r not found — creating (dim=%d, dense=%r, sparse=%r).",
                 self.collection,
                 self.dim,
+                self.dense_vector_name,
+                self.sparse_vector_name,
             )
             self._client.create_collection(
                 collection_name=self.collection,
-                vectors_config=VectorParams(size=self.dim, distance=Distance.COSINE),
+                # Named dense vector (cosine similarity for semantic search)
+                vectors_config={
+                    self.dense_vector_name: VectorParams(
+                        size=self.dim,
+                        distance=Distance.COSINE,
+                    ),
+                },
+                # Named sparse vector (dot-product for SPLADE term matching)
+                sparse_vectors_config={
+                    self.sparse_vector_name: SparseVectorParams(),
+                },
             )
-            # Index payload fields used as filters so queries stay fast
             self._ensure_payload_indexes()
         else:
             logger.info("Collection %r already exists — skipping creation.", self.collection)
@@ -157,9 +222,11 @@ class QdrantStore:
 
         Each dict in *points* must contain:
 
-        - ``"vector"`` — ``list[float]`` of length :attr:`dim`.
+        - ``"dense_vector"`` — ``list[float]`` of length :attr:`dim`.
+        - ``"sparse_vector"`` — :class:`~pdf_semantic_search.models.SparseEmbedding`
+          produced by a SPLADE-style sparse embedder.
         - ``"payload"`` — ``dict`` with at minimum ``"text"`` and
-          ``"source_file"`` keys.  ``"category"`` is
+          ``"source_file"`` keys.  ``"category"`` and ``"version"`` are
           optional but enable filtering.
         - ``"id"`` — *optional* ``int`` or ``str`` UUID.  A random UUID is
           generated if omitted.
@@ -175,12 +242,16 @@ class QdrantStore:
 
         self._connect()
 
-        from qdrant_client.models import PointStruct
-
         structs = [
             PointStruct(
                 id=p.get("id") or str(uuid.uuid4()),
-                vector=p["vector"],
+                vector={
+                    self.dense_vector_name: p["dense_vector"],
+                    self.sparse_vector_name: SparseVector(
+                        indices=p["sparse_vector"].indices,
+                        values=p["sparse_vector"].values,
+                    ),
+                },
                 payload=p["payload"],
             )
             for p in points
@@ -189,50 +260,91 @@ class QdrantStore:
         self._client.upsert(  # type: ignore[union-attr]
             collection_name=self.collection,
             points=structs,
-            wait=True,  # block until the operation is acknowledged
+            wait=True,
         )
         logger.debug("Upserted %d point(s) into %r.", len(structs), self.collection)
 
     # ------------------------------------------------------------------
-    # Read
+    # Read — hybrid dense + sparse with RRF fusion
     # ------------------------------------------------------------------
 
     def search(
         self,
-        query_vector: list[float],
+        query_dense: list[float],
+        query_sparse: SparseEmbedding,
         top_r: int = 5,
         category: Optional[str] = None,
         version: Optional[str] = None,
     ) -> list[SearchResult]:
-        """Return the *top_r* most similar chunks to *query_vector*.
+        """Return the *top_r* best chunks using hybrid dense + sparse search.
+
+        Issues two ``Prefetch`` sub-queries in parallel:
+
+        1. **Dense ANN** — cosine similarity via the ``"dense"`` named vector.
+        2. **Sparse term** — dot-product via the ``"sparse"`` named vector
+           (SPLADE++ weights map to vocabulary term relevance).
+
+        Both legs are merged with **Reciprocal Rank Fusion** (RRF), which
+        rewards documents that rank highly in *either* (or both) sub-queries.
+        This means:
+
+        * Exact / near-exact keyword matches ("hot engine") surface even if
+          they are semantically distant in the dense space.
+        * Semantically related concepts ("engine warming up") surface even
+          without the exact term.
 
         Args:
-            query_vector: Embedding of the search query (same dim as stored vectors).
-            top_r:        Maximum number of results to return.
-            category:     If set, restricts results to points whose payload
-                          ``category`` field exactly matches this value.
-            version:      If set, restricts results to points whose payload
-                          ``version`` field exactly matches this value.
+            query_dense:  Dense embedding of the search query.
+            query_sparse: Sparse SPLADE embedding of the search query.
+            top_r:        Maximum number of results to return after RRF fusion.
+            category:     If set, restricts *both* sub-queries to points whose
+                          payload ``category`` field exactly matches this value.
+            version:      If set, restricts *both* sub-queries to points whose
+                          payload ``version`` field exactly matches this value.
 
         Returns:
-            List of :class:`SearchResult` objects ordered by descending score.
+            List of :class:`SearchResult` objects ordered by descending RRF
+            score (best match first).
         """
         self._connect()
 
         query_filter = self._build_filter(category=category, version=version)
 
+        # Prefetch more candidates than `top_r` so RRF has enough material
+        # to re-rank.  A factor of 3× with a minimum of 20 is a safe default.
+        prefetch_limit = max(top_r * 3, 20)
+
         logger.debug(
-            "Searching %r — top_r=%d, category=%r, version=%r",
+            "Hybrid search in %r — top_r=%d, prefetch=%d, category=%r, version=%r",
             self.collection,
             top_r,
+            prefetch_limit,
             category,
             version,
         )
 
         response = self._client.query_points(  # type: ignore[union-attr]
             collection_name=self.collection,
-            query=query_vector,
-            query_filter=query_filter,
+            prefetch=[
+                # Leg 1: dense semantic ANN
+                Prefetch(
+                    query=query_dense,
+                    using=self.dense_vector_name,
+                    limit=prefetch_limit,
+                    filter=query_filter,
+                ),
+                # Leg 2: sparse term matching (SPLADE)
+                Prefetch(
+                    query=SparseVector(
+                        indices=query_sparse.indices,
+                        values=query_sparse.values,
+                    ),
+                    using=self.sparse_vector_name,
+                    limit=prefetch_limit,
+                    filter=query_filter,
+                ),
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
             limit=top_r,
             with_payload=True,
         )
@@ -252,13 +364,13 @@ class QdrantStore:
         self._connect()
 
         categories: set[str] = set()
-        offset = None  # scroll cursor
+        offset = None
 
         while True:
             records, offset = self._client.scroll(  # type: ignore[union-attr]
                 collection_name=self.collection,
                 scroll_filter=None,
-                limit=256,          # page size for the scroll
+                limit=256,
                 offset=offset,
                 with_payload=["category"],
                 with_vectors=False,
@@ -270,7 +382,7 @@ class QdrantStore:
                     categories.add(cat)
 
             if offset is None:
-                break  # no more pages
+                break
 
         return sorted(categories)
 
@@ -286,6 +398,8 @@ class QdrantStore:
         """Build a Qdrant ``Filter`` from optional keyword constraints.
 
         Returns ``None`` if no fields are set (no filtering applied).
+        The same filter is applied to *both* Prefetch legs so results stay
+        consistent across dense and sparse retrieval.
         """
         must_filters: list[Condition] = []
 

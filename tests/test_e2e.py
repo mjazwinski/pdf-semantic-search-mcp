@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.conftest import make_chunks, make_mock_embedder, make_search_result
+from tests.conftest import make_chunks, make_mock_embedder, make_mock_sparse_embedder, make_search_result
 
 
 # ---------------------------------------------------------------------------
@@ -74,11 +74,14 @@ class TestParserToIngestion:
         mock_store = MagicMock(spec=QdrantStore)
         pdf_path = Path("/fake/doc.pdf")
 
+        sparse_embedder = make_mock_sparse_embedder()
+
         with patch("fitz.open", return_value=fake_doc):
             with patch.object(Path, "exists", return_value=True):
                 service = IngestionService(
                     parser=PyMuPDFParser(),
                     embedder=embedder,
+                    sparse_embedder=sparse_embedder,
                     store=mock_store,
                 )
                 total = service.ingest(pdf_path, chunk_size=chunk_size, **ingest_kwargs)
@@ -115,7 +118,8 @@ class TestParserToIngestion:
         def run_ingest():
             from pdf_semantic_search.ingestion.service import IngestionService
             from pdf_semantic_search.pdf.parser import PyMuPDFParser
-            svc = IngestionService(PyMuPDFParser(), embedder, mock_store)
+            sparse_emb = make_mock_sparse_embedder()
+            svc = IngestionService(PyMuPDFParser(), embedder, sparse_emb, mock_store)
             with patch("fitz.open", return_value=fake_doc):
                 with patch.object(Path, "exists", return_value=True):
                     svc.ingest(Path("/fake/doc.pdf"))
@@ -138,10 +142,10 @@ class TestParserToIngestion:
         all_texts = [text for call in embedder.embed.call_args_list for text in call.args[0]]
         assert len(all_texts) == 2
 
-    def test_vector_dimension_stored_in_point(self):
+    def test_dense_vector_dimension_stored_in_point(self):
         _, store, _ = self._run(["embedding dimension test"], chunk_size=512)
         point = store.upsert.call_args.args[0][0]
-        assert len(point["vector"]) == 4  # dim=4 in make_mock_embedder
+        assert len(point["dense_vector"]) == 4  # dim=4 in make_mock_embedder
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +166,11 @@ class TestIngestionToMCPSearch:
     def _make_deps(self, results=None, categories=None, dim=4):
         from pdf_semantic_search.mcp_server.server import _Deps
         embedder = make_mock_embedder(dim=dim)
+        sparse_embedder = make_mock_sparse_embedder()
         store = MagicMock()
         store.search.return_value = results or []
         store.list_categories.return_value = categories or []
-        return _Deps(embedder=embedder, store=store)
+        return _Deps(embedder=embedder, sparse_embedder=sparse_embedder, store=store)
 
     def test_search_result_fields_present_in_json(self):
         from pdf_semantic_search.mcp_server.server import _handle_search_docs
@@ -239,9 +244,11 @@ class TestFullStackPayloadConsistency:
         mock_store = MagicMock()
         mock_store.upsert.side_effect = lambda pts: captured_points.extend(pts)
 
+        sparse_embedder = make_mock_sparse_embedder()
+
         with patch("fitz.open", return_value=fake_doc):
             with patch.object(Path, "exists", return_value=True):
-                svc = IngestionService(PyMuPDFParser(), embedder, mock_store)
+                svc = IngestionService(PyMuPDFParser(), embedder, sparse_embedder, mock_store)
                 svc.ingest(Path("/fake/test.pdf"), category="testing", version="v2")
 
         assert captured_points, "No points were ingested"
@@ -262,8 +269,9 @@ class TestFullStackPayloadConsistency:
         search_embedder = make_mock_embedder(dim=4)
         search_store = MagicMock()
         
+        search_sparse_embedder = make_mock_sparse_embedder()
         search_store.search.return_value = [fake_result]
-        deps = _Deps(embedder=search_embedder, store=search_store)
+        deps = _Deps(embedder=search_embedder, sparse_embedder=search_sparse_embedder, store=search_store)
 
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
             response = run(_handle_search_docs({"query": {"text": "test sentence"}}, mcpContext=AsyncMock()))
@@ -303,10 +311,11 @@ class TestTrueIntegration:
     def cleanup_collection(self):
         from qdrant_client import QdrantClient
         client = QdrantClient(host="localhost", port=6333)
-        client.recreate_collection(
-            collection_name=self.COLLECTION,
-            vectors_config={"size": self.DIM, "distance": "Cosine"},
-        )
+        # Delete first so QdrantStore can recreate with the correct named-vector layout
+        try:
+            client.delete_collection(self.COLLECTION)
+        except Exception:
+            pass
         yield
         try:
             client.delete_collection(self.COLLECTION)
@@ -328,24 +337,30 @@ class TestTrueIntegration:
         doc.save(str(pdf_path))
         doc.close()
 
+        from pdf_semantic_search.embeddings.sparse_embedder import FastEmbedSparseEmbedder
+
         embedder = SentenceTransformerEmbedder(model_name=self.MODEL)
+        sparse_embedder = FastEmbedSparseEmbedder()
         store = QdrantStore("localhost", 6333, self.COLLECTION, self.DIM)
         store._connect()
 
-        svc = IngestionService(parser=PyMuPDFParser(), embedder=embedder, store=store)
+        svc = IngestionService(
+            parser=PyMuPDFParser(), embedder=embedder, sparse_embedder=sparse_embedder, store=store
+        )
         total = svc.ingest(pdf_path, chunk_size=200, overlap=20, category="test")
         assert total > 0
 
-        query_vec = embedder.embed(["self-attention"])[0]
-        results = store.search(query_vec, top_r=3)
+        query_dense = embedder.embed(["self-attention"])[0]
+        query_sparse = sparse_embedder.embed_sparse(["self-attention"])[0]
+        results = store.search(query_dense, query_sparse, top_r=3)
         assert len(results) > 0
-        assert results[0].score > 0.5
         assert "attention" in results[0].text.lower()
 
     def test_mcp_search_against_live_qdrant(self, tmp_path):
         import fitz
 
         from pdf_semantic_search.embeddings.sentence_transformer import SentenceTransformerEmbedder
+        from pdf_semantic_search.embeddings.sparse_embedder import FastEmbedSparseEmbedder
         from pdf_semantic_search.ingestion.service import IngestionService
         from pdf_semantic_search.mcp_server.server import _Deps, _handle_search_docs, _reset_deps
         from pdf_semantic_search.pdf.parser import PyMuPDFParser
@@ -360,15 +375,16 @@ class TestTrueIntegration:
         doc.close()
 
         embedder = SentenceTransformerEmbedder(model_name=self.MODEL)
+        sparse_embedder = FastEmbedSparseEmbedder()
         store = QdrantStore("localhost", 6333, self.COLLECTION, self.DIM)
         store._connect()
 
         mcp_context = AsyncMock()
 
-        svc = IngestionService(PyMuPDFParser(), embedder, store)
+        svc = IngestionService(PyMuPDFParser(), embedder, sparse_embedder, store)
         svc.ingest(pdf_path, chunk_size=200, overlap=20, category="ml")
 
-        deps = _Deps(embedder=embedder, store=store)
+        deps = _Deps(embedder=embedder, sparse_embedder=sparse_embedder, store=store)
         with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
             response = run(_handle_search_docs({
                 "query": {"text": "deep learning representations", "category": "ml"},

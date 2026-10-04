@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pdf_semantic_search.models import SparseEmbedding
 from pdf_semantic_search.mcp_server.server import (
     _Deps,
     _get_deps,
@@ -28,6 +29,7 @@ from pdf_semantic_search.vector_store.qdrant_store import SearchResult
 # ---------------------------------------------------------------------------
 
 mcp_context = AsyncMock()
+
 
 def run(coro):
     """Run a coroutine synchronously — no pytest-asyncio needed."""
@@ -58,17 +60,20 @@ def _make_result(
 def _make_deps(
     search_results: list[SearchResult] | None = None,
     categories: list[str] | None = None,
-    embed_vector: list[float] | None = None,
+    embed_dense: list[float] | None = None,
 ) -> _Deps:
     embedder = MagicMock()
     embedder.dim = 4
-    embedder.embed.return_value = [embed_vector or [0.1, 0.2, 0.3, 0.4]]
+    embedder.embed.return_value = [embed_dense or [0.1, 0.2, 0.3, 0.4]]
+
+    sparse_embedder = MagicMock()
+    sparse_embedder.embed_sparse.return_value = [SparseEmbedding(indices=[0, 1], values=[0.5, 0.5])]
 
     store = MagicMock()
     store.search.return_value = search_results or []
     store.list_categories.return_value = categories or []
 
-    return _Deps(embedder=embedder, store=store)
+    return _Deps(embedder=embedder, sparse_embedder=sparse_embedder, store=store)
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +103,11 @@ def test_result_to_dict_none_fields_preserved():
     r = _make_result(category=None)
     d = _result_to_dict(r)
     assert d["category"] is None
+
+
+def test_result_to_dict_version_field():
+    r = _make_result(version="v2")
+    assert _result_to_dict(r)["version"] == "v2"
 
 
 # ---------------------------------------------------------------------------
@@ -138,20 +148,35 @@ def test_search_docs_empty_results_returns_empty_array():
     assert json.loads(results[0].text) == []
 
 
-def test_search_docs_embeds_query_text():
+def test_search_docs_embeds_query_text_dense():
     deps = _make_deps()
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         run(_handle_search_docs({"query": {"text": "my search query"}}, mcp_context))
     deps.embedder.embed.assert_called_once_with(["my search query"])
 
 
-def test_search_docs_passes_vector_to_store():
-    fake_vector = [0.9, 0.8, 0.7, 0.6]
-    deps = _make_deps(embed_vector=fake_vector)
+def test_search_docs_embeds_query_text_sparse():
+    deps = _make_deps()
+    with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
+        run(_handle_search_docs({"query": {"text": "my search query"}}, mcp_context))
+    deps.sparse_embedder.embed_sparse.assert_called_once_with(["my search query"])
+
+
+def test_search_docs_passes_dense_vector_to_store():
+    fake_dense = [0.9, 0.8, 0.7, 0.6]
+    deps = _make_deps(embed_dense=fake_dense)
     with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
         run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
     call_kwargs = deps.store.search.call_args.kwargs
-    assert call_kwargs["query_vector"] == fake_vector
+    assert call_kwargs["query_dense"] == fake_dense
+
+
+def test_search_docs_passes_sparse_vector_to_store():
+    deps = _make_deps()
+    with patch("pdf_semantic_search.mcp_server.server._get_deps", return_value=deps):
+        run(_handle_search_docs({"query": {"text": "q"}}, mcp_context))
+    call_kwargs = deps.store.search.call_args.kwargs
+    assert isinstance(call_kwargs["query_sparse"], SparseEmbedding)
 
 
 def test_search_docs_passes_top_r():
@@ -278,15 +303,19 @@ def test_reset_deps_clears_singleton():
 def test_get_deps_initialises_on_first_call():
     mock_embedder = MagicMock()
     mock_embedder.dim = 4
+    mock_sparse_embedder = MagicMock()
+    mock_sparse_embedder.embed_sparse.return_value = [SparseEmbedding(indices=[0], values=[1.0])]
     mock_store = MagicMock()
 
     with (
         patch("pdf_semantic_search.mcp_server.server.SentenceTransformerEmbedder", return_value=mock_embedder),
+        patch("pdf_semantic_search.mcp_server.server.FastEmbedSparseEmbedder", return_value=mock_sparse_embedder),
         patch("pdf_semantic_search.mcp_server.server.QdrantStore", return_value=mock_store),
     ):
         deps = _get_deps()
 
     assert deps.embedder is mock_embedder
+    assert deps.sparse_embedder is mock_sparse_embedder
     assert deps.store is mock_store
     mock_store._connect.assert_called_once()
 

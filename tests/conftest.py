@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from pdf_semantic_search.models import SparseEmbedding
 from pdf_semantic_search.pdf.parser import TextChunk
 from pdf_semantic_search.vector_store.qdrant_store import SearchResult
 
@@ -91,6 +92,31 @@ def make_mock_embedder(dim: int = 4) -> MagicMock:
 def mock_embedder() -> MagicMock:
     """A dim=4 mock embedder whose vectors are deterministic on text length."""
     return make_mock_embedder(dim=4)
+
+
+# ---------------------------------------------------------------------------
+# Mock sparse embedding model
+# ---------------------------------------------------------------------------
+
+
+def make_mock_sparse_embedder() -> MagicMock:
+    """Return a MagicMock that satisfies the SparseEmbeddingModel protocol.
+
+    Each text produces a deterministic two-entry sparse vector whose single
+    non-zero index is the text length and whose value is 1.0.  This is
+    simple enough to reason about in tests while still being distinct per text.
+    """
+    embedder = MagicMock()
+    embedder.embed_sparse.side_effect = lambda texts: [
+        SparseEmbedding(indices=[len(t) % 100], values=[1.0]) for t in texts
+    ]
+    return embedder
+
+
+@pytest.fixture()
+def mock_sparse_embedder() -> MagicMock:
+    """A mock sparse embedder with deterministic single-entry sparse vectors."""
+    return make_mock_sparse_embedder()
 
 
 # ---------------------------------------------------------------------------
